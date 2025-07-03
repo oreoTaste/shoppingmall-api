@@ -13,6 +13,9 @@ services:
     # 컨테이너의 이름을 지정합니다.
     container_name: api-container
     
+    networks:
+      - shopping-network
+
     # 포트 매핑을 설정합니다. (호스트 포트:컨테이너 포트)
     ports:
       - "8080:8080"
@@ -28,3 +31,7 @@ services:
       # 호스트의 ./uploads 폴더를 컨테이너의 /app/uploads 폴더와 연결(매핑)합니다.
       # 이 설정을 통해 컨테이너에 업로드된 파일이 호스트 컴퓨터에 영구적으로 저장됩니다.
       - ./uploads:/app/uploads
+        
+networks:
+  shopping-network:
+    external: true
