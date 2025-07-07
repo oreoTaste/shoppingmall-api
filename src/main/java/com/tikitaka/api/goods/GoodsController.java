@@ -144,6 +144,7 @@ public class GoodsController {
             @RequestPart("buyPrice") String buyPriceStr,
             @RequestPart(name = "origin", required = false) String origin,
             @RequestPart(name = "files", required = false) MultipartFile[] imageFiles,
+            @RequestPart(name = "aiCheckYn", required = false) String aiCheckYn,
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
         log.info("상품 등록 요청이 들어왔습니다: {}", goodsName);
@@ -159,6 +160,7 @@ public class GoodsController {
                 userDetails.getMemberId(), 
                 userDetails.getMemberId()
             );
+            newGoods.setAiCheckYn(StringUtil.isNullOrEmpty(aiCheckYn) ? "N" : aiCheckYn);
 
             // 2. 확보된 상품 정보와 파일을 FilesService로 전달하여 파일 처리
             Goods savedGoods = goodsService.save(newGoods);

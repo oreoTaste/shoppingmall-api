@@ -28,6 +28,8 @@ public class GoodsListDto extends CommonEntity {
 	private List<FilesCoreDto> files = new ArrayList<>();
 	// 원산지
 	private String origin;
+	// ai검수여부
+	private String aiCheckYn;
 	
 	// 모든 필드를 포함하는 생성자
 	public GoodsListDto(Long goodsId, String goodsName, String mobileGoodsName, Long salesPrice, Long buyPrice, String origin, Long insertId, Long updateId) {

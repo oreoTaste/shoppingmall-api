@@ -22,6 +22,8 @@ public class Goods extends CommonEntity {
 	private Long buyPrice;
 	// 원산지
 	private String origin; 
+	// ai검수여부
+	private String aiCheckYn;
 
 	public Goods(Long goodsId, String goodsName, String mobileGoodsName, Long salesPrice, Long buyPrice, String origin, Long insertId, Long updateId) {
 		this.goodsId = goodsId;

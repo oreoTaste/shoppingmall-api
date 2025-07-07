@@ -50,7 +50,7 @@ public class DBGoodsRepository implements GoodsRepository {
     public Goods save(Goods goods) {
         // goods_id 자동 생성을 위한 KeyHolder
         KeyHolder keyHolder = new GeneratedKeyHolder();
-        String sql = "INSERT INTO public.goods (goods_name, mobile_goods_name, sales_price, buy_price, origin, insert_id, update_id) VALUES (?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO public.goods (goods_name, mobile_goods_name, sales_price, buy_price, origin, insert_id, update_id, ai_check_yn) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         
         jdbcTemplate.update(connection -> {
             // PreparedStatement 생성 시 Statement.RETURN_GENERATED_KEYS 옵션을 사용하여 자동 생성된 키를 반환받습니다.
@@ -62,6 +62,7 @@ public class DBGoodsRepository implements GoodsRepository {
             ps.setString(5, goods.getOrigin());
             ps.setLong(6, goods.getInsertId());
             ps.setLong(7, goods.getUpdateId());
+            ps.setString(8, goods.getAiCheckYn());
             return ps;
         }, keyHolder);
 
@@ -114,7 +115,7 @@ public class DBGoodsRepository implements GoodsRepository {
     public List<GoodsListDto> findAllbyPeriodWithFiles() {
         String sql = "SELECT " +
                      "    a.goods_id, a.goods_name, a.mobile_goods_name, a.sales_price, a.buy_price, " +
-                     "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, " +
+                     "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, a.ai_check_yn, " +
                      "    b.files_id, b.file_path, b.file_name " + // files 테이블의 정보
                      "FROM public.goods a LEFT OUTER JOIN public.files b ON a.goods_id = b.goods_id " +
                      "ORDER BY a.goods_id ASC, b.files_id ASC"; // 정렬을 추가하여 그룹핑을 용이하게 합니다.
@@ -150,6 +151,7 @@ public class DBGoodsRepository implements GoodsRepository {
                     );
                     goods.setInsertAt(rs.getDate("insert_at"));
                     goods.setModifiedAt(rs.getDate("modified_at"));
+                    goods.setAiCheckYn(rs.getString("ai_check_yn"));
                     goodsMap.put(goodsId, goods);
                 }
 
@@ -180,7 +182,7 @@ public class DBGoodsRepository implements GoodsRepository {
         // DB 스키마에 맞는 컬럼명 'goods_id'로 수정
         String sql = "SELECT " +
                      "    a.goods_id, a.goods_name, a.mobile_goods_name, a.sales_price, a.buy_price, " +
-                     "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, " +
+                     "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, a.ai_check_yn, " +
                      "    b.files_id, b.file_path, b.file_name " +
                      "FROM public.goods a LEFT OUTER JOIN public.files b " + 
                      "ON a.goods_id = b.goods_id " +
