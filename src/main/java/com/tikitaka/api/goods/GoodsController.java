@@ -105,12 +105,14 @@ public class GoodsController {
                 userDetails.getMemberId(), 
                 userDetails.getMemberId()
             );
-            
-            // to-do) 수정화면에서 inspection할때만 오류가 나는걸로 봐서 이부분에서 오류가 나는걸로 추정
+            if(!goodsId.isBlank()) {
+                newGoods.setGoodsId(Long.valueOf(goodsId));
+            }
+
             // 첨부파일이 없는 경우, 기존에 저장된 첨부파일을 통해
-            if("false".equals(isFileNew) && !goodsId.isBlank()) {
+            if("false".equals(isFileNew)) {
                 // 1. DB에서 파일 정보 목록을 가져옵니다.
-                List<Files> savedFiles = this.filesService.findByGoodsId(Long.valueOf(goodsId));
+                List<Files> savedFiles = this.filesService.findByGoodsId(newGoods.getGoodsId());
                 log.info("savedFiles");
                 for(Files file: savedFiles) {
                     log.info(file.toString());                	
@@ -121,6 +123,17 @@ public class GoodsController {
                 result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, fileContent);
             } else {
                 result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, imageFiles);            	
+            }
+            
+            System.out.println("result.isApproved() : " + result.isApproved());
+            System.out.println("newGoods.getGoodsId() : " + newGoods.getGoodsId());
+            
+            // 승인 + 수정인 경우
+            if(result.isApproved() && newGoods.getGoodsId() != null) {
+                System.out.println("과연성공할것인가");
+                newGoods.setAiCheckYn("Y");
+                boolean updateAiCheckYn = this.goodsService.updateAiCheckYn(newGoods);
+                System.out.println("updateAiCheckYn : " + updateAiCheckYn);
             }
             
             // 성공 응답 반환

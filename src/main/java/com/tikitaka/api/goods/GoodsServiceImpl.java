@@ -117,5 +117,24 @@ public class GoodsServiceImpl implements GoodsService {
         }
 
         return true;
-    }    
-}
+    }
+
+    @Override
+    public boolean updateAiCheckYn(Goods goods) {
+        // 1. Retrieve the existing Goods entity from the database using goodsId.
+        //    You'll need a method in your goodsRepository to find a Goods by its ID.
+        Goods goodsToUpdate = goodsRepository.findById(goods.getGoodsId()); // Assuming findById exists
+
+        System.out.println("goodsToUpdate" + goodsToUpdate);
+        if (goodsToUpdate != null) {
+            // 2. Set the new aiCheckYn value.
+            goodsToUpdate.setAiCheckYn(goods.getAiCheckYn());
+
+            // 3. Update the Goods entity in the database.
+            //    This update method in your repository should persist the changes.
+            boolean isGoodsUpdated = goodsRepository.update(goodsToUpdate);
+            return isGoodsUpdated;
+        }
+        // If the goods with the given ID was not found, return false.
+        return false;
+    }}

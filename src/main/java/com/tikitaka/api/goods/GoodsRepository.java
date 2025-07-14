@@ -49,4 +49,12 @@ public interface GoodsRepository {
 	 * @return 모든 상품의 리스트 (현재는 findOne()과 동일)
 	 */
 	GoodsListDto findbyPeriodWithFiles(Long goodsId);
+
+
+    /**
+     * 주어진 goodsId로 상품을 조회합니다.
+     * @param goodsId 조회할 상품의 ID
+     * @return 조회된 Goods 객체, 없으면 null 반환
+     */
+    Goods findById(Long goodsId);
 }

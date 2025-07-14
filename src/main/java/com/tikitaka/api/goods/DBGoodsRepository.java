@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ResultSetExtractor;
+import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.support.GeneratedKeyHolder; // GeneratedKeyHolder 임포트 추가
 import org.springframework.jdbc.support.KeyHolder; // KeyHolder 임포트 추가
 import org.springframework.stereotype.Repository;
@@ -76,21 +77,35 @@ public class DBGoodsRepository implements GoodsRepository {
 
     /**
      * 상품 정보를 업데이트합니다.
-     * modified_at 필드는 데이터베이스에서 NOW()로 자동 업데이트되도록 처리.
-     * @param goods 업데이트할 Goods 객체
+     * goods_name, mobile_goods_name, sales_price, buy_price, update_id 필드를 업데이트하며,
+     * ai_check_yn 값이 null이 아닌 경우에만 해당 필드를 업데이트합니다.
+     * modified_at 필드는 데이터베이스에서 NOW()로 자동 업데이트되도록 처리됩니다.
+     * @param goods 업데이트할 Goods 객체 (goodsId가 반드시 포함되어야 함)
      * @return 업데이트된 행의 수가 1이면 true, 아니면 false
      */
     @Override
     public boolean update(Goods goods) {
-        String sql = "UPDATE public.goods SET goods_name = ?, mobile_goods_name = ?, sales_price = ?, buy_price = ?, update_id = ?, modified_at = NOW() WHERE goods_id = ?";
-        int affectedRows = jdbcTemplate.update(sql,
-            goods.getGoodsName(),
-            goods.getMobileGoodsName(),
-            goods.getSalesPrice(),
-            goods.getBuyPrice(),
-            goods.getUpdateId(),
-            goods.getGoodsId()
-        );
+        StringBuilder sqlBuilder = new StringBuilder("UPDATE public.goods SET ");
+        List<Object> params = new ArrayList<>();
+
+        // 필수 업데이트 필드
+        sqlBuilder.append("goods_name = ?, mobile_goods_name = ?, sales_price = ?, buy_price = ?, update_id = ?, modified_at = NOW()");
+        params.add(goods.getGoodsName());
+        params.add(goods.getMobileGoodsName());
+        params.add(goods.getSalesPrice());
+        params.add(goods.getBuyPrice());
+        params.add(goods.getUpdateId());
+
+        // ai_check_yn이 null이 아닌 경우에만 추가
+        if (goods.getAiCheckYn() != null) {
+            sqlBuilder.append(", ai_check_yn = ?");
+            params.add(goods.getAiCheckYn());
+        }
+
+        sqlBuilder.append(" WHERE goods_id = ?");
+        params.add(goods.getGoodsId());
+
+        int affectedRows = jdbcTemplate.update(sqlBuilder.toString(), params.toArray());
         return affectedRows == 1;
     }
 
@@ -201,5 +216,39 @@ public class DBGoodsRepository implements GoodsRepository {
         // 결과가 없으면 null을 반환합니다.
         return null;
 	}
+
+
+    /**
+     * 주어진 상품 ID에 해당하는 Goods 객체를 데이터베이스에서 조회합니다.
+     * 이 메서드는 상품의 기본 정보만 조회하며, 파일 정보는 포함하지 않습니다.
+     * @param goodsId 조회할 상품의 고유 ID
+     * @return 조회된 Goods 객체. 해당 ID의 상품이 존재하지 않으면 null을 반환합니다.
+     */
+    @Override
+    public Goods findById(Long goodsId) {
+        String sql = "SELECT goods_id, goods_name, mobile_goods_name, sales_price, buy_price, origin, insert_at, insert_id, modified_at, update_id, ai_check_yn FROM public.goods WHERE goods_id = ?";
+        try {
+            return jdbcTemplate.queryForObject(sql, new RowMapper<Goods>() {
+                @Override
+                public Goods mapRow(ResultSet rs, int rowNum) throws SQLException {
+                    Goods goods = new Goods();
+                    goods.setGoodsId(rs.getLong("goods_id"));
+                    goods.setGoodsName(rs.getString("goods_name"));
+                    goods.setMobileGoodsName(rs.getString("mobile_goods_name"));
+                    goods.setSalesPrice(rs.getLong("sales_price"));
+                    goods.setBuyPrice(rs.getLong("buy_price"));
+                    goods.setOrigin(rs.getString("origin"));
+                    goods.setInsertAt(rs.getDate("insert_at")); // Use getTimestamp for date/time fields
+                    goods.setInsertId(rs.getLong("insert_id"));
+                    goods.setModifiedAt(rs.getDate("modified_at")); // Use getTimestamp for date/time fields
+                    goods.setUpdateId(rs.getLong("update_id"));
+                    goods.setAiCheckYn(rs.getString("ai_check_yn"));
+                    return goods;
+                }
+            }, goodsId);
+        } catch (DataAccessException e) {
+            return null;
+        }
+    }	
 
 }
