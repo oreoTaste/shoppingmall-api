@@ -94,51 +94,62 @@ public class GoodsController {
             @AuthenticationPrincipal CustomUserDetails userDetails
     ) {
         log.info("상품 검수 요청이 들어왔습니다: {}", goodsName);
-        InspectionResult result;
         try {
+            // 1. Goods 객체 기본 정보 생성
             Goods newGoods = new Goods(
-                goodsName, 
-                mobileGoodsName, 
-                Long.valueOf(salesPriceStr), 
-                Long.valueOf(buyPriceStr), 
+                goodsName,
+                mobileGoodsName,
+                Long.valueOf(salesPriceStr),
+                Long.valueOf(buyPriceStr),
                 StringUtil.isNullOrEmpty(origin) ? "국내산" : origin,
-                userDetails.getMemberId(), 
+                userDetails.getMemberId(),
                 userDetails.getMemberId()
             );
-            if(!goodsId.isBlank()) {
+
+            InspectionResult result;
+
+            // 2. 로직 분기: goodsId 유무로 신규/수정 판단
+            // [수정] goodsId가 없는 경우 (신규 상품 등록)
+            if (goodsId == null || goodsId.isBlank()) {
+                log.info("신규 상품 검수를 시작합니다.");
+                // 신규 상품은 항상 새로운 파일을 사용해야 합니다.
+                result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, imageFiles);
+
+            // [수정] goodsId가 있는 경우 (기존 상품 수정)
+            } else {
                 newGoods.setGoodsId(Long.valueOf(goodsId));
+                log.info("기존 상품(ID: {}) 수정을 위한 검수를 시작합니다.", goodsId);
+
+                // 파일이 새로 첨부되지 않은 경우, DB에서 기존 파일을 조회
+                if ("false".equals(isFileNew)) {
+                    log.info("기존 저장된 파일로 검수를 진행합니다.");
+                    // 1. DB에서 파일 정보 목록을 가져옵니다.
+                    List<Files> savedFiles = this.filesService.findByGoodsId(newGoods.getGoodsId());
+                    log.info("savedFiles");
+                    for (Files file : savedFiles) {
+                        log.info(file.toString());
+                    }
+                    // 2. 실제 파일 내용을 읽어옵니다.
+                    List<FileContent> fileContent = this.filesService.readFiles(savedFiles);
+                    result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, fileContent);
+                } else { // 새로운 파일로 교체하는 경우
+                    log.info("새로운 첨부 파일로 검수를 진행합니다.");
+                    result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, imageFiles);
+                }
             }
 
-            // 첨부파일이 없는 경우, 기존에 저장된 첨부파일을 통해
-            if("false".equals(isFileNew)) {
-                // 1. DB에서 파일 정보 목록을 가져옵니다.
-                List<Files> savedFiles = this.filesService.findByGoodsId(newGoods.getGoodsId());
-                log.info("savedFiles");
-                for(Files file: savedFiles) {
-                    log.info(file.toString());                	
-                }
-                
-                // 2. 실제 파일 내용을 읽어옵니다.
-                List<FileContent> fileContent = this.filesService.readFiles(savedFiles);
-                result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, fileContent);
-            } else {
-                result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, imageFiles);            	
-            }
-            
             System.out.println("result.isApproved() : " + result.isApproved());
             System.out.println("newGoods.getGoodsId() : " + newGoods.getGoodsId());
-            
-            // 승인 + 수정인 경우
-            if(result.isApproved() && newGoods.getGoodsId() != null) {
-                System.out.println("과연성공할것인가");
+
+            // 승인 + 수정인 경우 (goodsId가 null이 아님)
+            if (result.isApproved() && newGoods.getGoodsId() != null) {
                 newGoods.setAiCheckYn("Y");
                 boolean updateAiCheckYn = this.goodsService.updateAiCheckYn(newGoods);
-                System.out.println("updateAiCheckYn : " + updateAiCheckYn);
             }
-            
+
             // 성공 응답 반환
             return ResponseEntity.ok(ApiResponseDto.success("상품을 성공적으로 검수했습니다.", result));
-        } catch(Exception e) {
+        } catch (Exception e) {
             // 실패 응답 반환
             log.error("상품 검수 중 오류 발생: {}", e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
