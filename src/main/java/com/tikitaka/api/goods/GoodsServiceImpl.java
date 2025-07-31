@@ -7,6 +7,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.tikitaka.api.files.FilesService;
 import com.tikitaka.api.goods.dto.GoodsListDto;
 import com.tikitaka.api.goods.entity.Goods;
+import com.tikitaka.api.image.ImageSplittingService;
 import com.tikitaka.api.member.dto.CustomUserDetails;
 
 import lombok.extern.slf4j.Slf4j;
@@ -24,17 +25,18 @@ import java.util.List;
 public class GoodsServiceImpl implements GoodsService {
 
     private final FilesService filesService;
-
     private final GoodsRepository goodsRepository; // GoodsRepository 주입을 위한 필드
+    private final ImageSplittingService imageSplittingService;
 
     /**
      * GoodsRepository를 주입받는 생성자.
      * Spring이 이 서비스를 생성할 때 자동으로 GoodsRepository 빈을 찾아 주입합니다.
      * @param goodsRepository 상품 데이터 접근을 위한 Repository
      */
-    public GoodsServiceImpl(GoodsRepository goodsRepository, FilesService filesService) {
+    public GoodsServiceImpl(GoodsRepository goodsRepository, FilesService filesService, ImageSplittingService imageSplittingService) {
         this.goodsRepository = goodsRepository;
         this.filesService = filesService;
+        this.imageSplittingService = imageSplittingService;
     }
 
     /**
@@ -112,8 +114,10 @@ public class GoodsServiceImpl implements GoodsService {
             filesService.deleteFilesByGoodsId(goods.getGoodsId()); // 물리적 파일 삭제
             filesService.delete(goods.getGoodsId());  // DB 레코드 삭제
             
+            // 파일의 세로길이가 너무 클 경우 자른다.
+            MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(imageFiles, 1600);
             // 4. 새로운 파일들을 저장합니다.
-            filesService.save(goods, imageFiles, userDetails);
+            filesService.save(goods, splittedImageFiles, userDetails);
         }
 
         return true;

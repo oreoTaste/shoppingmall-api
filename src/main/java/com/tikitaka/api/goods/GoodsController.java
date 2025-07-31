@@ -14,6 +14,7 @@ import com.tikitaka.api.files.entity.Files;
 import com.tikitaka.api.global.dto.ApiResponseDto;
 import com.tikitaka.api.goods.dto.GoodsListDto;
 import com.tikitaka.api.goods.entity.Goods;
+import com.tikitaka.api.image.ImageSplittingService;
 import com.tikitaka.api.inspection.InspectService;
 import com.tikitaka.api.inspection.dto.FileContent;
 import com.tikitaka.api.inspection.dto.InspectionResult;
@@ -29,18 +30,17 @@ import java.util.List; // List 인터페이스 임포트
 public class GoodsController {
 
     private final SecurityFilterChain filterChain;
+	private final GoodsService goodsService;
+	private final FilesService filesService;
+	private final InspectService inspectService;
+	private final ImageSplittingService imageSplittingService;
 
-	// GoodsService를 자동으로 주입받습니다.
-	// Spring 컨테이너가 GoodsService 타입의 빈을 찾아 이 필드에 할당합니다.
-	@Autowired
-	private GoodsService goodsService;
-	@Autowired
-	private FilesService filesService;
-	@Autowired
-	private InspectService inspectService;
-
-    GoodsController(SecurityFilterChain filterChain) {
+	GoodsController(SecurityFilterChain filterChain, GoodsService goodsService, FilesService filesService, InspectService inspectService, ImageSplittingService imageSplittingService) {
         this.filterChain = filterChain;
+        this.goodsService = goodsService;
+        this.filesService = filesService;
+        this.inspectService = inspectService;
+        this.imageSplittingService = imageSplittingService;
     }
 
 	/**
@@ -112,8 +112,9 @@ public class GoodsController {
             // [수정] goodsId가 없는 경우 (신규 상품 등록)
             if (goodsId == null || goodsId.isBlank()) {
                 log.info("신규 상품 검수를 시작합니다.");
+                MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(imageFiles, 1600);
                 // 신규 상품은 항상 새로운 파일을 사용해야 합니다.
-                result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, imageFiles);
+                result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, splittedImageFiles);
 
             // [수정] goodsId가 있는 경우 (기존 상품 수정)
             } else {
@@ -134,7 +135,8 @@ public class GoodsController {
                     result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, fileContent);
                 } else { // 새로운 파일로 교체하는 경우
                     log.info("새로운 첨부 파일로 검수를 진행합니다.");
-                    result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, imageFiles);
+                    MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(imageFiles, 1600);
+                    result = this.inspectService.inspectGoodsInfoWithPhotos(newGoods, splittedImageFiles);
                 }
             }
 
@@ -188,7 +190,8 @@ public class GoodsController {
 
             // 2. 확보된 상품 정보와 파일을 FilesService로 전달하여 파일 처리
             Goods savedGoods = goodsService.save(newGoods);
-            filesService.save(savedGoods, imageFiles, userDetails);      
+            MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(imageFiles, 1600);
+            filesService.save(savedGoods, splittedImageFiles, userDetails);      
             
             // 성공 응답 반환
             return ResponseEntity.status(HttpStatus.CREATED)
