@@ -34,4 +34,11 @@ public interface FilesRepository {
      */
 	boolean deleteByGoodsId(Long goodsId);
 
+    /**
+     * filesId를 사용하여 해당 상품에 연관된 모든 파일 목록을 삭제합니다.
+     * @param filesId 조회할 파일의 ID
+     * @return 성공여부
+     */
+	boolean delete(Long filesId);
+
 }

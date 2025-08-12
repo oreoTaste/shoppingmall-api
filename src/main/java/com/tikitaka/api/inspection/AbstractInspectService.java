@@ -9,8 +9,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.OptionalDouble;
@@ -110,15 +112,24 @@ public abstract class AbstractInspectService implements InspectService {
     }
 
     // --- 공통 Private Helper Methods ---
-
     private NaverShoppingResponse searchNaverShopping(String productName) {
         log.info("네이버 쇼핑 검색 API 호출: {}", productName);
+        // 1. URI 객체를 미리 생성합니다.
+        URI uri = UriComponentsBuilder
+                .fromUriString("https://openapi.naver.com/v1/search/shop.json")
+                .queryParam("query", productName)
+                .queryParam("display", 10)
+                .queryParam("sort", "sim")
+                .encode() // URL 인코딩(예: 공백 -> %20)을 보장합니다.
+                .build()
+                .toUri();
+
+        // 2. 생성된 URI를 로그로 출력합니다.
+        log.info("네이버 요청 URL: {}", uri.toString());
+        
+        // 3. WebClient에는 완성된 URI 객체를 직접 전달합니다.
         return webClient.get()
-                .uri("https://openapi.naver.com/v1/search/shop.json", uriBuilder ->
-                        uriBuilder.queryParam("query", productName)
-                                .queryParam("display", 10)
-                                .queryParam("sort", "sim")
-                                .build())
+                .uri(uri) // .uri() 메소드는 URI 객체도 받을 수 있습니다.
                 .header("X-Naver-Client-Id", naverClientId)
                 .header("X-Naver-Client-Secret", naverClientSecret)
                 .retrieve()

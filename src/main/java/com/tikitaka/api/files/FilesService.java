@@ -11,7 +11,6 @@ import com.tikitaka.api.inspection.dto.FileContent;
 import com.tikitaka.api.member.dto.CustomUserDetails;
 
 public interface FilesService {
-	void save(Goods goods, MultipartFile[] file, CustomUserDetails userDetails) throws IOException;
 	
     /**
      * [추가] goodsId를 기준으로 파일 목록을 조회하는 서비스 메소드
@@ -26,15 +25,40 @@ public interface FilesService {
      * @throws IOException 파일 읽기 중 오류 발생 시
      */
     List<FileContent> readFiles(List<Files> files) throws IOException;
-    
+
+    /**
+     * filesId에 해당하는 파일데이터를 삭제합니다.
+     */
+	boolean deleteByFilesId(Long filesId);
+
     /**
      * goodsId에 해당하는 파일데이터를 삭제합니다.
      */
-    boolean delete(Long goodsId);
+    boolean deleteDBFilesByGoodsId(Long goodsId);
     
     /**
      * goodsId에 해당하는 물리적 파일들을 삭제합니다.
      */
     void deleteFilesByGoodsId(Long goodsId);
 
+    /**
+     * filesId에 해당하는 물리적 파일들을 삭제합니다.
+     */
+    void deleteFilesByFilesId(Long filesId);
+    /**
+     * 파일 목록 저장
+     */
+	void save(Goods goods, MultipartFile[] files, CustomUserDetails userDetails, boolean representativeYn) throws IOException;
+
+    /**
+     * 파일 목록 저장
+     */
+	void save(Goods goods, MultipartFile[] files, CustomUserDetails userDetails) throws IOException;
+
+    /**
+     * 파일 목록 저장
+     */
+	void save(Goods goods, String fileTag, CustomUserDetails userDetails) throws IOException;
+
+	
 }

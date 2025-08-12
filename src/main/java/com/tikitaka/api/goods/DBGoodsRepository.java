@@ -131,7 +131,7 @@ public class DBGoodsRepository implements GoodsRepository {
         String sql = "SELECT " +
                      "    a.goods_id, a.goods_name, a.mobile_goods_name, a.sales_price, a.buy_price, " +
                      "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, a.ai_check_yn, " +
-                     "    b.files_id, b.file_path, b.file_name " + // files 테이블의 정보
+                     "    b.representative_yn, b.file_type, b.files_id, b.file_path, b.file_name " + // files 테이블의 정보
                      "FROM public.goods a LEFT OUTER JOIN public.files b ON a.goods_id = b.goods_id " +
                      "ORDER BY a.goods_id ASC, b.files_id ASC"; // 정렬을 추가하여 그룹핑을 용이하게 합니다.
         
@@ -173,10 +173,12 @@ public class DBGoodsRepository implements GoodsRepository {
                 // 파일 정보가 존재하는 경우 (LEFT JOIN으로 인해 null일 수 있음)
                 if (rs.getObject("files_id") != null) {
                 	FilesCoreDto file = new FilesCoreDto();
+                	file.setFileType(rs.getString("file_type"));
                     file.setFilesId(rs.getLong("files_id"));
                     file.setFilePath(rs.getString("file_path"));
                     file.setFileName(rs.getString("file_name"));
                     file.setGoodsId(goodsId); // 파일 객체에도 goodsId를 설정
+                    file.setRepresentativeYn(rs.getBoolean("representative_yn"));
                     
                     // 해당 상품의 파일 리스트에 생성된 파일 객체를 추가합니다.
                     goods.getFiles().add(file);
@@ -198,7 +200,7 @@ public class DBGoodsRepository implements GoodsRepository {
         String sql = "SELECT " +
                      "    a.goods_id, a.goods_name, a.mobile_goods_name, a.sales_price, a.buy_price, " +
                      "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, a.ai_check_yn, " +
-                     "    b.files_id, b.file_path, b.file_name " +
+                     "    b.representative_yn, b.file_type, b.files_id, b.file_path, b.file_name " +
                      "FROM public.goods a LEFT OUTER JOIN public.files b " + 
                      "ON a.goods_id = b.goods_id " +
                      "WHERE a.goods_id = ? " + // WHERE 절의 컬럼명 수정

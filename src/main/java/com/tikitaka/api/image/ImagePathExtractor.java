@@ -2,9 +2,13 @@ package com.tikitaka.api.image;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.springframework.stereotype.Service;
+
 import java.util.ArrayList;
 import java.util.List;
 
+@Service
 public class ImagePathExtractor {
 
     public static List<String> extractImageUrls(String html) {

@@ -33,7 +33,7 @@ public class DBFilesRepository implements FilesRepository {
     @Override
     public Files save(Files file) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
-        String sql = "INSERT INTO public.files (file_path, file_name, goods_id, insert_id, update_id) VALUES (?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO public.files (file_path, file_name, goods_id, insert_id, update_id, representative_yn, file_type) VALUES (?, ?, ?, ?, ?, ?, ?)";
 
         jdbcTemplate.update(connection -> {
             PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
@@ -42,6 +42,8 @@ public class DBFilesRepository implements FilesRepository {
             ps.setLong(3, file.getGoodsId());
             ps.setLong(4, file.getInsertId());
             ps.setLong(5, file.getUpdateId());
+            ps.setString(6, file.isRepresentativeYn() ? "1" : "0");
+            ps.setString(7, file.getFileType());
             return ps;
         }, keyHolder);
 
@@ -59,7 +61,7 @@ public class DBFilesRepository implements FilesRepository {
      */
     @Override
     public Optional<Files> findById(Long filesId) {
-        String sql = "SELECT files_id, file_path, file_name, goods_id, insert_id, update_id, created_at, modified_at FROM public.files WHERE files_id = ?";
+        String sql = "SELECT files_id, file_path, file_name, goods_id, insert_id, update_id, created_at, modified_at, file_type, representative_yn FROM public.files WHERE files_id = ?";
         try {
             List<Files> result = jdbcTemplate.query(sql, filesRowMapper(), filesId);
             return result.stream().findAny();
@@ -75,7 +77,7 @@ public class DBFilesRepository implements FilesRepository {
      */
     @Override
     public List<Files> findByGoodsId(Long goodsId) {
-        String sql = "SELECT files_id, file_path, file_name, goods_id, insert_id, update_id, created_at, modified_at FROM public.files WHERE goods_id = ?";
+        String sql = "SELECT files_id, file_path, file_name, goods_id, insert_id, update_id, created_at, modified_at, file_type, representative_yn FROM public.files WHERE goods_id = ?";
         return jdbcTemplate.query(sql, filesRowMapper(), goodsId);
     }
 
@@ -90,7 +92,9 @@ public class DBFilesRepository implements FilesRepository {
                 rs.getString("file_name"),
                 rs.getLong("goods_id"),
                 rs.getLong("insert_id"),
-                rs.getLong("update_id")
+                rs.getLong("update_id"),
+                rs.getBoolean("representative_yn"),
+                rs.getString("file_type")
             );
             file.setFilesId(rs.getLong("files_id"));
             file.setInsertAt(rs.getDate("created_at"));
@@ -111,4 +115,18 @@ public class DBFilesRepository implements FilesRepository {
 
         return true;
     }
+
+	@Override
+	public boolean delete(Long filesId) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        String sql = "delete from public.files where files_id = ?";
+
+        jdbcTemplate.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            ps.setLong(1, filesId);
+            return ps;
+        }, keyHolder);
+
+        return true;
+	}
 }

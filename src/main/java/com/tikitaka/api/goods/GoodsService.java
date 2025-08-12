@@ -47,7 +47,12 @@ public interface GoodsService {
     /**
      * 상품 정보와 파일을 함께 업데이트하는 트랜잭션 메소드
      */
-    boolean updateWithFiles(Goods goods, MultipartFile[] imageFiles, CustomUserDetails userDetails) throws IOException;
+    boolean updateWithFiles(Goods goods, MultipartFile[] representativeFiles,  MultipartFile[] imageFiles, CustomUserDetails userDetails) throws IOException;
+    
+    /**
+     * 상품 정보와 파일을 함께 업데이트하는 트랜잭션 메소드
+     */
+    boolean updateWithFiles(Goods goods, MultipartFile[] representativeFiles, String imageTag, CustomUserDetails userDetails) throws IOException;
     
     /**
      * AI검토 완료여부값을 update하는 메소드.

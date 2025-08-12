@@ -2,12 +2,17 @@ package com.tikitaka.api.files;
 
 import com.tikitaka.api.files.entity.Files;
 import com.tikitaka.api.goods.entity.Goods;
+import com.tikitaka.api.image.ImageDownloadService;
+import com.tikitaka.api.image.ImagePathExtractor;
 import com.tikitaka.api.inspection.dto.FileContent;
 import com.tikitaka.api.member.dto.CustomUserDetails;
 
+import ch.qos.logback.core.util.StringUtil;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,14 +36,12 @@ import java.util.UUID;
 @RequiredArgsConstructor // [수정] 이 어노테이션만 남겨둡니다.
 public class FilesServiceImpl implements FilesService {
 
-    private final FilesRepository filesRepository;
-
-    // [수정] @Value 어노테이션을 필드에 직접 적용합니다.
     @Value("${file.upload-dir}")
     private String uploadDir;
-    
-    // [수정] Path 객체는 final을 제거하고, 초기화 로직을 분리합니다.
     private Path fileStorageLocation;
+    
+    private final FilesRepository filesRepository;
+    private final ImageDownloadService imageDownloadService;
     
     // [수정] @PostConstruct를 사용하여 의존성 주입 후 초기화 로직을 실행합니다.
     @PostConstruct
@@ -50,7 +53,7 @@ public class FilesServiceImpl implements FilesService {
             throw new RuntimeException("파일을 업로드할 디렉토리를 생성할 수 없습니다.", ex);
         }
     }
-
+    
     /**
      * 여러 개의 파일을 사용자 ID와 연도별 폴더에 나누어 저장합니다.
      * @param goods 연관된 상품 엔티티
@@ -60,7 +63,7 @@ public class FilesServiceImpl implements FilesService {
      */
     @Override
     @Transactional
-    public void save(Goods goods, MultipartFile[] files, CustomUserDetails userDetails) throws IOException {
+    public void save(Goods goods, MultipartFile[] files, CustomUserDetails userDetails, boolean representativeYn) throws IOException {
         if (files == null || files.length == 0 || (files.length == 1 && files[0].isEmpty())) {
             log.info("첨부된 파일이 없습니다.");
             return;
@@ -103,13 +106,41 @@ public class FilesServiceImpl implements FilesService {
             // DB에 저장할 웹 경로도 연도별 폴더 구조를 포함하도록 수정합니다.
             String webAccessiblePath = "/uploads/" + subPath + "/" + storedFileName; // 예: /uploads/3/2025/uuid.jpg
             
-            Files newFile = new Files(webAccessiblePath, originalFileName, goods.getGoodsId(), memberId, memberId);
+            Files newFile = new Files(webAccessiblePath, originalFileName, goods.getGoodsId(), memberId, memberId, representativeYn, "1" /*db에 저장된 파일*/);
             
             filesRepository.save(newFile);
             
             log.info("파일이 성공적으로 저장되었습니다. 경로: {}", webAccessiblePath);
         }
     }
+
+    /**
+     * 여러 개의 파일을 사용자 ID와 연도별 폴더에 나누어 저장합니다.
+     * @param goods 연관된 상품 엔티티
+     * @param files 저장할 파일들의 배열
+     * @param userDetails 현재 인증된 사용자 정보
+     * @throws IOException 파일 저장 중 오류 발생 시
+     */
+    @Override
+    @Transactional
+    public void save(Goods goods, MultipartFile[] files, CustomUserDetails userDetails) throws IOException {
+    	this.save(goods, files, userDetails, false);
+    }
+    
+	public void save(Goods goods, String imageHtml, CustomUserDetails userDetails) throws IOException {
+
+        if (imageHtml == null || StringUtil.isNullOrEmpty(imageHtml)) {
+            log.info("첨부된 사진 태그가 없습니다.");
+            return;
+        }
+
+        // 고유한 파일명 생성
+        String originalFileName = imageHtml;
+        Files newFile = new Files("", originalFileName, goods.getGoodsId(), userDetails.getMemberId(), userDetails.getMemberId(), false, "2" /* 파일서버에 저장된 파일*/);
+        filesRepository.save(newFile);
+        
+        log.info("사진 태그가 성공적으로 저장되었습니다. 파일정보: {}", newFile);
+	}
     
     /**
      * [추가] goodsId를 기준으로 파일 목록을 조회하는 서비스 메소드
@@ -131,26 +162,47 @@ public class FilesServiceImpl implements FilesService {
         }
 
         List<FileContent> fileContents = new ArrayList<>();
-        for (Files dbFile : files) {
+        for (Files file : files) {
             try {
-                String relativePath = dbFile.getFilePath().startsWith("/uploads/") 
-                                      ? dbFile.getFilePath().substring("/uploads/".length()) 
-                                      : dbFile.getFilePath();
+            	// db에 태그로 저장된 내용은 goods테이블에서 삭제할때 함께 삭제됨
+            	if(file.getFileType().equals("1") /* 서버에 저장된 파일*/) {
+	                String relativePath = file.getFilePath().startsWith("/uploads/") 
+	                                      ? file.getFilePath().substring("/uploads/".length()) 
+	                                      : file.getFilePath();
+	
+	                Path absoluteFilePath = this.fileStorageLocation.resolve(relativePath).normalize();
+	                
+	                if (java.nio.file.Files.exists(absoluteFilePath)) {
+	                    byte[] bytes = java.nio.file.Files.readAllBytes(absoluteFilePath);
+	                    
+	                    // [핵심 수정] 확장자를 기반으로 MIME 타입을 결정하는 헬퍼 메소드 호출
+	                    String mimeType = getMimeType(file.getFileName(), absoluteFilePath);
+	
+	                    fileContents.add(new FileContent(file.getFileName(), mimeType, bytes));
+	                } else {
+	                    log.warn("파일을 찾을 수 없습니다: {}", absoluteFilePath.toString());
+	                }
+            	} else if(file.getFileType().equals("2") /*태그로 저장된 파일*/) {
+                    List<String> imageUrlList = ImagePathExtractor.extractImageUrls(file.getFileName());
+                    // 외부 이미지를 다운로드
+                    MultipartFile[] downloadedImageFiles = this.imageDownloadService.downloadImagesAsMultipartFiles(imageUrlList);
+                    for (MultipartFile downloadedImageFile : downloadedImageFiles) {
+                        try {
+                            // MultipartFile에서 파일 이름, MIME 타입, 파일 내용을 추출합니다.
+                            String fileName = downloadedImageFile.getOriginalFilename();
+                            String mimeType = downloadedImageFile.getContentType();
+                            byte[] bytes = downloadedImageFile.getBytes();
 
-                Path absoluteFilePath = this.fileStorageLocation.resolve(relativePath).normalize();
-                
-                if (java.nio.file.Files.exists(absoluteFilePath)) {
-                    byte[] bytes = java.nio.file.Files.readAllBytes(absoluteFilePath);
-                    
-                    // [핵심 수정] 확장자를 기반으로 MIME 타입을 결정하는 헬퍼 메소드 호출
-                    String mimeType = getMimeType(dbFile.getFileName(), absoluteFilePath);
-
-                    fileContents.add(new FileContent(dbFile.getFileName(), mimeType, bytes));
-                } else {
-                    log.warn("파일을 찾을 수 없습니다: {}", absoluteFilePath.toString());
-                }
+                            // 추출한 정보로 FileContent 객체를 생성하여 리스트에 추가합니다.
+                            fileContents.add(new FileContent(fileName, mimeType, bytes));
+                        } catch (IOException e) {
+                            // 개별 파일 처리 중 오류가 발생해도 로깅 후 계속 진행합니다.
+                            log.error("다운로드된 파일({})을 읽는 중 오류 발생", downloadedImageFile.getOriginalFilename(), e);
+                        }
+                    }
+            	}
             } catch (IOException e) {
-                log.error("파일({})을 읽는 중 오류 발생", dbFile.getFilePath(), e);
+                log.error("파일({})을 읽는 중 오류 발생", file.getFilePath(), e);
             }
         }
         return fileContents;
@@ -190,11 +242,17 @@ public class FilesServiceImpl implements FilesService {
         return "application/octet-stream";
     }
     
+    
+	@Override
+	public boolean deleteByFilesId(Long filesId) {
+        return filesRepository.delete(filesId);
+	}    
+
     /*
      * [구현] goodsId에 해당하는 물리적 파일들을 삭제합니다.
      */
     @Override
-    public boolean delete(Long goodsId) {
+    public boolean deleteDBFilesByGoodsId(Long goodsId) {
         return filesRepository.deleteByGoodsId(goodsId);
     }    
     
@@ -214,8 +272,46 @@ public class FilesServiceImpl implements FilesService {
         // 2. 각 파일 정보에 대해 물리적 파일을 삭제합니다.
         for (Files file : filesToDelete) {
             try {
+            	// db에 태그로 저장된 내용은 goods테이블에서 삭제할때 함께 삭제됨
+            	if(file.getFileType().equals("1") /* 서버에 저장된 파일*/) {
+                    // DB에 저장된 웹 경로에서 실제 파일 시스템 경로를 구성합니다.
+                    String pathWithoutUploads = file.getFilePath().replaceFirst("/uploads/", "");
+                    Path filePath = this.fileStorageLocation.resolve(pathWithoutUploads).normalize();
+
+                    // 파일이 존재하면 삭제합니다.
+                    if (java.nio.file.Files.exists(filePath)) {
+                        java.nio.file.Files.delete(filePath);
+                        log.info("파일 삭제 성공: {}", filePath);
+                    } else {
+                        log.warn("삭제할 파일을 찾을 수 없습니다: {}", filePath);
+                    }            		
+            	}
+            } catch (IOException e) {
+                // 특정 파일 삭제 실패 시, 로그만 남기고 다음 파일로 진행합니다.
+                // 또는 예외를 던져서 전체 트랜잭션을 롤백할 수도 있습니다.
+                log.error("파일({})을 삭제하는 중 오류 발생", file.getFilePath(), e);
+            }
+        }
+        // DB의 files 레코드는 ON DELETE CASCADE에 의해 goods 레코드 삭제 시 자동으로 삭제됩니다.
+    }
+
+	@Override
+	public void deleteFilesByFilesId(Long filesId) {
+        // 1. DB에서 삭제할 파일들의 정보를 조회합니다.
+		Optional<Files> filesToDelete = filesRepository.findById(filesId);
+
+        if (filesToDelete.isEmpty()) {
+            log.info("filesId '{}'에 삭제할 파일이 없습니다.", filesId);
+            return;
+        }
+
+    	Files fileToDelete = filesToDelete.get();
+        // 2. 각 파일 정보에 대해 물리적 파일을 삭제합니다.
+        try {
+        	// db에 태그로 저장된 내용은 goods테이블에서 삭제할때 함께 삭제됨
+        	if(fileToDelete.equals("1") /* 서버에 저장된 파일*/) {
                 // DB에 저장된 웹 경로에서 실제 파일 시스템 경로를 구성합니다.
-                String pathWithoutUploads = file.getFilePath().replaceFirst("/uploads/", "");
+                String pathWithoutUploads = fileToDelete.getFilePath().replaceFirst("/uploads/", "");
                 Path filePath = this.fileStorageLocation.resolve(pathWithoutUploads).normalize();
 
                 // 파일이 존재하면 삭제합니다.
@@ -224,13 +320,13 @@ public class FilesServiceImpl implements FilesService {
                     log.info("파일 삭제 성공: {}", filePath);
                 } else {
                     log.warn("삭제할 파일을 찾을 수 없습니다: {}", filePath);
-                }
-            } catch (IOException e) {
-                // 특정 파일 삭제 실패 시, 로그만 남기고 다음 파일로 진행합니다.
-                // 또는 예외를 던져서 전체 트랜잭션을 롤백할 수도 있습니다.
-                log.error("파일({})을 삭제하는 중 오류 발생", file.getFilePath(), e);
-            }
+                }            		
+        	}
+        } catch (IOException e) {
+            // 특정 파일 삭제 실패 시, 로그만 남기고 다음 파일로 진행합니다.
+            // 또는 예외를 던져서 전체 트랜잭션을 롤백할 수도 있습니다.
+            log.error("파일({})을 삭제하는 중 오류 발생", fileToDelete.getFilePath(), e);
         }
-        // DB의 files 레코드는 ON DELETE CASCADE에 의해 goods 레코드 삭제 시 자동으로 삭제됩니다.
-    }    
+	}
+
 }

@@ -15,16 +15,20 @@ public class Files extends CommonEntity {
 
     // [수정] 이 엔티티의 고유한 기본 키(Primary Key)를 명확하게 추가합니다.
     private Long filesId;
+    private boolean representativeYn;
 
     private String filePath; // 웹에서 접근 가능한 경로 (예: /uploads/image.jpg)
     private String fileName; // 원본 파일 이름
     private Long goodsId;    // 이 파일이 속한 상품의 ID
+    private String fileType; // 파일 속성 (1: 이미지파일, 2:태그) 
 
-    public Files(String filePath, String fileName, Long goodsId, Long insertId, Long updateId) {
+    public Files(String filePath, String fileName, Long goodsId, Long insertId, Long updateId, boolean representativeYn, String fileType) {
         this.filePath = filePath;
         this.fileName = fileName;
         this.goodsId = goodsId;
         this.insertId = insertId;
         this.updateId = updateId;
+        this.representativeYn = representativeYn;
+        this.fileType = fileType;
     }
 }

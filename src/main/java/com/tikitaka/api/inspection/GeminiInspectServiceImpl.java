@@ -69,7 +69,9 @@ public class GeminiInspectServiceImpl extends AbstractInspectService {
         if (files != null) {
             for (MultipartFile file : files) {
                 if (file == null || file.isEmpty()) continue;
-                imageParts.add(new GeminiRequest.Part(String.format("--- 첨부 이미지 파일명: %s ---", file.getOriginalFilename())));
+            	String fileName = String.format("--- 첨부 이미지 파일명: %s ---", file.getOriginalFilename());
+                log.info("파일명 : {}", fileName);
+                imageParts.add(new GeminiRequest.Part(fileName));
                 byte[] fileBytes = file.getBytes();
                 String base64EncodedImage = Base64.getEncoder().encodeToString(fileBytes);
                 imageParts.add(new GeminiRequest.Part(new GeminiRequest.InlineData(file.getContentType(), base64EncodedImage)));
@@ -82,7 +84,9 @@ public class GeminiInspectServiceImpl extends AbstractInspectService {
         List<GeminiRequest.Part> imageParts = new ArrayList<>();
         if (fileContents != null) {
             for (FileContent file : fileContents) {
-                imageParts.add(new GeminiRequest.Part(String.format("--- 첨부 이미지 파일명: %s ---", file.getOriginalFileName())));
+            	String fileName = String.format("--- 첨부 이미지 파일명: %s ---", file.getOriginalFileName());
+                log.info("파일명 : {}", fileName);
+                imageParts.add(new GeminiRequest.Part(fileName));
                 String base64EncodedImage = Base64.getEncoder().encodeToString(file.getContent());
                 imageParts.add(new GeminiRequest.Part(new GeminiRequest.InlineData(file.getMimeType(), base64EncodedImage)));
             }

@@ -5,11 +5,13 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.tikitaka.api.files.FilesService;
+import com.tikitaka.api.files.entity.Files;
 import com.tikitaka.api.goods.dto.GoodsListDto;
 import com.tikitaka.api.goods.entity.Goods;
 import com.tikitaka.api.image.ImageSplittingService;
 import com.tikitaka.api.member.dto.CustomUserDetails;
 
+import ch.qos.logback.core.util.StringUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -91,12 +93,107 @@ public class GoodsServiceImpl implements GoodsService {
         return goodsRepository.delete(goodsId);
     }
 
+    @Transactional
+    public boolean updateGoods(Goods goods) throws IOException {
+        // 1. 상품 정보(텍스트)를 먼저 업데이트합니다.
+        boolean isGoodsUpdated = goodsRepository.update(goods);
+        if (!isGoodsUpdated) {
+            log.warn("업데이트할 상품을 찾지 못했습니다. ID: {}", goods.getGoodsId());
+            return false;
+        }
+        return true;
+        
+    }
+    
+    
     /**
      * [구현] 상품 정보와 파일을 함께 업데이트하는 트랜잭션 메소드
      */
     @Override
     @Transactional
-    public boolean updateWithFiles(Goods goods, MultipartFile[] imageFiles, CustomUserDetails userDetails) throws IOException {
+    public boolean updateWithFiles(Goods goods, MultipartFile[] representativeFiles, MultipartFile[] imageFiles, CustomUserDetails userDetails) throws IOException {
+        // 1. 상품 정보(텍스트)를 먼저 업데이트합니다.
+        boolean isGoodsUpdated = goodsRepository.update(goods);
+        if (!isGoodsUpdated) {
+            log.error("상품 업데이트 실패: ID {}에 해당하는 상품을 찾지 못했습니다.", goods.getGoodsId());
+            return false;
+        }
+
+        try {
+            // 2. 새로운 파일이 첨부되었는지 확인합니다.
+            boolean hasNewRepresentativeFiles = representativeFiles != null && representativeFiles.length > 0 && !representativeFiles[0].isEmpty();
+            boolean hasNewImageFiles = imageFiles != null && imageFiles.length > 0 && !imageFiles[0].isEmpty();
+
+            // 3. 새로운 파일이 있다면 기존 파일을 삭제하고 새 파일을 저장합니다.
+            if (hasNewRepresentativeFiles) {
+                // 기존 대표 파일 삭제 (물리적 파일 및 DB 레코드)
+                deleteRepresentativeFilesByGoodsId(goods.getGoodsId());
+                // 새 대표 파일 저장
+                filesService.save(goods, representativeFiles, userDetails, true); // true는 대표 파일임을 나타내는 플래그
+            }
+
+            if (hasNewImageFiles) {
+                // 기존 상세 파일 삭제 (물리적 파일 및 DB 레코드)
+                deleteImageFilesByGoodsId(goods.getGoodsId());
+                
+                // 파일의 세로길이가 너무 클 경우 자른다.
+                MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(imageFiles, 1600);
+                
+                // 새 상세 파일 저장
+                filesService.save(goods, splittedImageFiles, userDetails, false); // false는 상세 파일임을 나타내는 플래그
+            }
+        } catch (Exception e) {
+            // 파일 처리 중 예상치 못한 오류 발생 시 트랜잭션 롤백과 함께 로그를 남깁니다.
+            log.error("상품 ID {}의 파일 업데이트 중 오류가 발생했습니다.", goods.getGoodsId(), e);
+            // 트랜잭션이 롤백될 것이므로 여기서 false를 반환해도 됩니다.
+            return false;
+        }
+        
+        return true;
+    }
+
+    private void deleteRepresentativeFilesByGoodsId(Long goodsId) {
+        try {
+            List<Files> oldFiles = filesService.findByGoodsId(goodsId);
+            for (Files oldFile : oldFiles) {
+                if (oldFile.isRepresentativeYn()) {
+                    // db에서 파일 삭제
+                    filesService.deleteByFilesId(oldFile.getFilesId());
+                    // 서버 저장된 파일 데이터 삭제
+                    filesService.deleteFilesByFilesId(oldFile.getFilesId());
+                }
+            }
+        } catch (Exception e) {
+            log.error("상품 ID {}의 대표 파일 삭제 중 오류가 발생했습니다.", goodsId, e);
+            // 오류가 발생해도 트랜잭션이 롤백되도록 예외를 다시 던질 수 있습니다.
+            throw new RuntimeException("대표 파일 삭제 실패", e);
+        }
+    }
+
+    private void deleteImageFilesByGoodsId(Long goodsId) {
+        try {
+            List<Files> oldFiles = filesService.findByGoodsId(goodsId);
+            for (Files oldFile : oldFiles) {
+                if (!oldFile.isRepresentativeYn()) {
+                    // db에서 파일 삭제
+                    filesService.deleteByFilesId(oldFile.getFilesId());
+                    // 서버 저장된 파일 데이터 삭제
+                    filesService.deleteByFilesId(oldFile.getFilesId());
+                }
+            }
+        } catch (Exception e) {
+            log.error("상품 ID {}의 상세 파일 삭제 중 오류가 발생했습니다.", goodsId, e);
+            // 오류가 발생해도 트랜잭션이 롤백되도록 예외를 다시 던질 수 있습니다.
+            throw new RuntimeException("상세 파일 삭제 실패", e);
+        }
+    }
+    
+    /**
+     * [구현] 상품 정보와 파일을 함께 업데이트하는 트랜잭션 메소드
+     */
+    @Override
+    @Transactional
+    public boolean updateWithFiles(Goods goods, MultipartFile[] representativeFiles, String imageTag, CustomUserDetails userDetails) throws IOException {
         // 1. 상품 정보(텍스트)를 먼저 업데이트합니다.
         boolean isGoodsUpdated = goodsRepository.update(goods);
         if (!isGoodsUpdated) {
@@ -105,21 +202,25 @@ public class GoodsServiceImpl implements GoodsService {
         }
 
         // 2. 새로운 파일이 첨부되었는지 확인합니다.
-        boolean hasNewFiles = imageFiles != null && imageFiles.length > 0 && !imageFiles[0].isEmpty();
+        boolean hasNewRepresentativeFiles = representativeFiles != null && representativeFiles.length > 0 && !representativeFiles[0].isEmpty();
+        boolean hasNewTag = imageTag != null && !StringUtil.isNullOrEmpty(imageTag);
         
-        if (hasNewFiles) {
-            log.info("새로운 파일이 감지되어 기존 파일을 삭제하고 새 파일을 저장합니다. Goods ID: {}", goods.getGoodsId());
-            
-            // 3. 만약 새 파일이 있다면, 기존의 모든 물리적 파일과 DB 레코드를 삭제합니다.
-            filesService.deleteFilesByGoodsId(goods.getGoodsId()); // 물리적 파일 삭제
-            filesService.delete(goods.getGoodsId());  // DB 레코드 삭제
-            
-            // 파일의 세로길이가 너무 클 경우 자른다.
-            MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(imageFiles, 1600);
-            // 4. 새로운 파일들을 저장합니다.
-            filesService.save(goods, splittedImageFiles, userDetails);
+        // 3. 새로운 파일이 있다면 기존 파일을 삭제하고 새 파일을 저장합니다.
+        if (hasNewRepresentativeFiles) {
+            // 기존 대표 파일 삭제 (물리적 파일 및 DB 레코드)
+            deleteRepresentativeFilesByGoodsId(goods.getGoodsId());
+            // 새 대표 파일 저장
+            filesService.save(goods, representativeFiles, userDetails, true);
         }
 
+        if (hasNewTag) {
+            // 기존 상세 파일 삭제 (물리적 파일 및 DB 레코드)
+            deleteImageFilesByGoodsId(goods.getGoodsId());
+            
+            // 새 상세 파일 저장
+            filesService.save(goods, imageTag, userDetails); // false는 상세 파일임을 나타내는 플래그
+        }
+        
         return true;
     }
 
