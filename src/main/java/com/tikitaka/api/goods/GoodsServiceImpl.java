@@ -6,15 +6,25 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.tikitaka.api.files.FilesService;
 import com.tikitaka.api.files.entity.Files;
+import com.tikitaka.api.goods.dto.GoodsInspectRequestDto;
 import com.tikitaka.api.goods.dto.GoodsListDto;
+import com.tikitaka.api.goods.dto.GoodsRegisterRequestDto;
+import com.tikitaka.api.goods.dto.GoodsUpdateRequestDto;
 import com.tikitaka.api.goods.entity.Goods;
+import com.tikitaka.api.image.ImageDownloadService;
+import com.tikitaka.api.image.ImagePathExtractor;
 import com.tikitaka.api.image.ImageSplittingService;
+import com.tikitaka.api.inspection.InspectService;
+import com.tikitaka.api.inspection.dto.FileContent;
+import com.tikitaka.api.inspection.dto.InspectionResult;
 import com.tikitaka.api.member.dto.CustomUserDetails;
 
 import ch.qos.logback.core.util.StringUtil;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -29,18 +39,166 @@ public class GoodsServiceImpl implements GoodsService {
     private final FilesService filesService;
     private final GoodsRepository goodsRepository; // GoodsRepository 주입을 위한 필드
     private final ImageSplittingService imageSplittingService;
+    private final InspectService inspectService;
+    private final ImageDownloadService imageDownloadService;
 
     /**
      * GoodsRepository를 주입받는 생성자.
      * Spring이 이 서비스를 생성할 때 자동으로 GoodsRepository 빈을 찾아 주입합니다.
      * @param goodsRepository 상품 데이터 접근을 위한 Repository
      */
-    public GoodsServiceImpl(GoodsRepository goodsRepository, FilesService filesService, ImageSplittingService imageSplittingService) {
+    public GoodsServiceImpl(GoodsRepository goodsRepository, FilesService filesService, ImageSplittingService imageSplittingService, InspectService inspectService, ImageDownloadService imageDownloadService) {
         this.goodsRepository = goodsRepository;
         this.filesService = filesService;
         this.imageSplittingService = imageSplittingService;
+        this.inspectService = inspectService;
+        this.imageDownloadService = imageDownloadService;
+    }
+    
+    /**
+     * [신규 구현] 상품 검수 로직을 서비스 계층에서 처리합니다.
+     */
+    @Override
+    @Transactional
+    public InspectionResult inspectNewGoods(GoodsInspectRequestDto request, CustomUserDetails userDetails) throws IOException {
+        // 1. 요청 DTO를 Goods 엔티티로 변환
+        Goods goods = request.toEntity(userDetails);
+
+        // 2. 검수에 필요한 파일 목록 준비 (기존 Controller의 private 메서드 로직 이동)
+        List<FileContent> filesToInspect = prepareInspectionFiles(
+            goods.getGoodsId(),
+            request.getRepresentativeFile(),
+            request.getImageFiles(),
+            request.getImageHtml(),
+            request.getImageType()
+        );
+
+        // 3. 외부 AI 검수 서비스 호출
+        InspectionResult result = inspectService.inspectGoodsInfoWithPhotos(goods, filesToInspect);
+
+        // 4. 검수 승인 시 후속 처리
+        if (result.isApproved()) {
+            handleApprovedInspection(goods);
+        }
+
+        return result;
+    }    
+
+    
+    @Override
+    @Transactional
+    public Goods registerGoods(GoodsRegisterRequestDto request, CustomUserDetails userDetails) throws IOException {
+        Goods newGoods = new Goods(
+            request.getGoodsName(),
+            request.getMobileGoodsName(),
+            Long.valueOf(request.getSalesPrice()),
+            Long.valueOf(request.getBuyPrice()),
+            request.getOrigin() == null || request.getOrigin().isEmpty() ? "국내산" : request.getOrigin(),
+            userDetails.getMemberId(),
+            userDetails.getMemberId()
+        );
+        newGoods.setAiCheckYn(request.getAiCheckYn() == null || request.getAiCheckYn().isEmpty() ? "N" : request.getAiCheckYn());
+
+        Goods savedGoods = goodsRepository.save(newGoods);
+
+        // 대표 이미지 저장
+        filesService.save(savedGoods, request.getRepresentativeFile(), userDetails, true);
+
+        // 상세 정보 저장 (HTML 또는 파일)
+        if ("html".equals(request.getImageType())) {
+            filesService.save(savedGoods, request.getImageHtml(), userDetails);
+        } else {
+            MultipartFile[] splittedImages = imageSplittingService.splitImages(request.getImageFiles(), 1600);
+            filesService.save(savedGoods, splittedImages, userDetails);
+        }
+
+        return savedGoods;
     }
 
+    @Override
+    @Transactional
+    public boolean updateGoods(GoodsUpdateRequestDto request, CustomUserDetails userDetails) throws IOException {
+        Goods goodsToUpdate = new Goods(
+                request.getGoodsId(),
+                request.getGoodsName(),
+                request.getMobileGoodsName(),
+                Long.valueOf(request.getSalesPrice()),
+                Long.valueOf(request.getBuyPrice()),
+                request.getOrigin(),
+                null, // insertId는 업데이트하지 않음
+                userDetails.getMemberId() // updateId 설정
+        );
+
+        if ("html".equals(request.getImageType())) {
+            return this.updateWithFiles(goodsToUpdate, request.getRepresentativeFile(), request.getImageHtml(), userDetails);
+        } else {
+            return this.updateWithFiles(goodsToUpdate, request.getRepresentativeFile(), request.getImageFiles(), userDetails);
+        }
+    } 
+    
+    // Controller에서 가져온 private 헬퍼 메서드들
+    private List<FileContent> prepareInspectionFiles(Long goodsId, MultipartFile[] representativeFile, MultipartFile[] imageFiles, String imageHtml, String imageType) throws IOException {
+        List<FileContent> inspectionFiles = new ArrayList<>();
+
+        boolean hasNewRepresentative = representativeFile != null && representativeFile.length > 0 && !representativeFile[0].isEmpty();
+        boolean hasNewImages = (imageFiles != null && imageFiles.length > 0 && !imageFiles[0].isEmpty()) || !StringUtil.isNullOrEmpty(imageHtml);
+
+        // 1. 대표 이미지 처리
+        if (hasNewRepresentative) {
+            inspectionFiles.addAll(convertMultipartToContent(representativeFile));
+        } else if (goodsId != null) {
+            List<Files> dbFiles = filesService.findByGoodsId(goodsId);
+            dbFiles.stream()
+                .filter(Files::isRepresentativeYn)
+                .findFirst()
+                .ifPresent(file -> {
+                    try {
+                        inspectionFiles.addAll(filesService.readFiles(List.of(file)));
+                    } catch (IOException e) {
+                        throw new RuntimeException("기존 대표 파일을 읽는 중 오류 발생", e);
+                    }
+                });
+        }
+
+        // 2. 상세 이미지 처리
+        if (hasNewImages) {
+            if ("html".equals(imageType)) {
+                List<String> imageUrls = ImagePathExtractor.extractImageUrls(imageHtml);
+                MultipartFile[] downloadedImages = imageDownloadService.downloadImagesAsMultipartFiles(imageUrls);
+                inspectionFiles.addAll(convertMultipartToContent(downloadedImages));
+            } else { // "file"
+                MultipartFile[] splittedImages = imageSplittingService.splitImages(imageFiles, 1600);
+                inspectionFiles.addAll(convertMultipartToContent(splittedImages));
+            }
+        } else if (goodsId != null) {
+            List<Files> dbFiles = filesService.findByGoodsId(goodsId);
+            List<Files> detailFiles = dbFiles.stream().filter(f -> !f.isRepresentativeYn()).toList();
+            inspectionFiles.addAll(filesService.readFiles(detailFiles));
+        }
+
+        return inspectionFiles;
+    }
+
+    private void handleApprovedInspection(Goods goods) {
+        if (goods.getGoodsId() != null) {
+            goods.setAiCheckYn("Y");
+            updateAiCheckYn(goods);
+        }
+    }
+
+    private List<FileContent> convertMultipartToContent(MultipartFile[] files) throws IOException {
+        if (files == null || files.length == 0) {
+            return Collections.emptyList();
+        }
+        List<FileContent> contents = new ArrayList<>();
+        for (MultipartFile file : files) {
+            if (file != null && !file.isEmpty()) {
+                contents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), file.getBytes()));
+            }
+        }
+        return contents;
+    }
+    
     /**
      * 새로운 상품을 저장합니다.
      * @param goods 저장할 Goods 객체
