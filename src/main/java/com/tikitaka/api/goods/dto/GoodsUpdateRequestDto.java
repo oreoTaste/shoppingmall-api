@@ -15,6 +15,6 @@ public class GoodsUpdateRequestDto {
     private String origin;
     private String imageType;
     private MultipartFile[] representativeFile;
-    private MultipartFile[] imageFiles;
+    private MultipartFile[] files;
     private String imageHtml;
 }

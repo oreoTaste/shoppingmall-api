@@ -14,7 +14,9 @@ import com.tikitaka.api.goods.entity.Goods;
 import com.tikitaka.api.image.ImageDownloadService;
 import com.tikitaka.api.image.ImagePathExtractor;
 import com.tikitaka.api.image.ImageSplittingService;
+import com.tikitaka.api.inspection.ForbiddenWordRepository;
 import com.tikitaka.api.inspection.InspectService;
+import com.tikitaka.api.inspection.InspectionHistoryService;
 import com.tikitaka.api.inspection.dto.FileContent;
 import com.tikitaka.api.inspection.dto.InspectionResult;
 import com.tikitaka.api.member.dto.CustomUserDetails;
@@ -41,18 +43,22 @@ public class GoodsServiceImpl implements GoodsService {
     private final ImageSplittingService imageSplittingService;
     private final InspectService inspectService;
     private final ImageDownloadService imageDownloadService;
+    private final ForbiddenWordRepository forbiddenWordRepository;
+    private final InspectionHistoryService inspectionHistoryService;
 
     /**
      * GoodsRepository를 주입받는 생성자.
      * Spring이 이 서비스를 생성할 때 자동으로 GoodsRepository 빈을 찾아 주입합니다.
      * @param goodsRepository 상품 데이터 접근을 위한 Repository
      */
-    public GoodsServiceImpl(GoodsRepository goodsRepository, FilesService filesService, ImageSplittingService imageSplittingService, InspectService inspectService, ImageDownloadService imageDownloadService) {
+    public GoodsServiceImpl(GoodsRepository goodsRepository, FilesService filesService, ImageSplittingService imageSplittingService, InspectService inspectService, ImageDownloadService imageDownloadService, ForbiddenWordRepository forbiddenWordRepository, InspectionHistoryService inspectionHistoryService) {
         this.goodsRepository = goodsRepository;
         this.filesService = filesService;
         this.imageSplittingService = imageSplittingService;
         this.inspectService = inspectService;
         this.imageDownloadService = imageDownloadService;
+        this.forbiddenWordRepository = forbiddenWordRepository;
+        this.inspectionHistoryService = inspectionHistoryService;
     }
     
     /**
@@ -72,11 +78,20 @@ public class GoodsServiceImpl implements GoodsService {
             request.getImageHtml(),
             request.getImageType()
         );
+        
+        // 금칙어 목록 준비하기
+        List<String> forbiddenWordsList = forbiddenWordRepository.findActiveForbiddenWords();
+
+        // 쉼표(,)를 구분자로 사용하여 하나의 String으로 변환합니다.
+        String forbiddenWords = String.join(",", forbiddenWordsList);
 
         // 3. 외부 AI 검수 서비스 호출
-        InspectionResult result = inspectService.inspectGoodsInfoWithPhotos(goods, filesToInspect);
+        InspectionResult result = inspectService.inspectGoodsInfoWithPhotos(goods, filesToInspect, forbiddenWords);
 
-        // 4. 검수 승인 시 후속 처리
+        // 4. 검수결과 저장
+        inspectionHistoryService.recordInspectionHistory(goods, result, userDetails);
+        
+        // 5. 검수 승인 시 후속 처리
         if (result.isApproved()) {
             handleApprovedInspection(goods);
         }
@@ -132,7 +147,7 @@ public class GoodsServiceImpl implements GoodsService {
         if ("html".equals(request.getImageType())) {
             return this.updateWithFiles(goodsToUpdate, request.getRepresentativeFile(), request.getImageHtml(), userDetails);
         } else {
-            return this.updateWithFiles(goodsToUpdate, request.getRepresentativeFile(), request.getImageFiles(), userDetails);
+            return this.updateWithFiles(goodsToUpdate, request.getRepresentativeFile(), request.getFiles(), userDetails);
         }
     } 
     
@@ -269,7 +284,7 @@ public class GoodsServiceImpl implements GoodsService {
      */
     @Override
     @Transactional
-    public boolean updateWithFiles(Goods goods, MultipartFile[] representativeFiles, MultipartFile[] imageFiles, CustomUserDetails userDetails) throws IOException {
+    public boolean updateWithFiles(Goods goods, MultipartFile[] representativeFiles, MultipartFile[] detailFiles, CustomUserDetails userDetails) throws IOException {
         // 1. 상품 정보(텍스트)를 먼저 업데이트합니다.
         boolean isGoodsUpdated = goodsRepository.update(goods);
         if (!isGoodsUpdated) {
@@ -280,7 +295,7 @@ public class GoodsServiceImpl implements GoodsService {
         try {
             // 2. 새로운 파일이 첨부되었는지 확인합니다.
             boolean hasNewRepresentativeFiles = representativeFiles != null && representativeFiles.length > 0 && !representativeFiles[0].isEmpty();
-            boolean hasNewImageFiles = imageFiles != null && imageFiles.length > 0 && !imageFiles[0].isEmpty();
+            boolean hasNewImageFiles = detailFiles != null && detailFiles.length > 0 && !detailFiles[0].isEmpty();
 
             // 3. 새로운 파일이 있다면 기존 파일을 삭제하고 새 파일을 저장합니다.
             if (hasNewRepresentativeFiles) {
@@ -295,7 +310,7 @@ public class GoodsServiceImpl implements GoodsService {
                 deleteImageFilesByGoodsId(goods.getGoodsId());
                 
                 // 파일의 세로길이가 너무 클 경우 자른다.
-                MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(imageFiles, 1600);
+                MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(detailFiles, 1600);
                 
                 // 새 상세 파일 저장
                 filesService.save(goods, splittedImageFiles, userDetails, false); // false는 상세 파일임을 나타내는 플래그
