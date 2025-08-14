@@ -16,7 +16,7 @@ public interface InspectService {
      * @param files 새로 첨부된 파일 배열
      * @return 검수 결과
      */
-    InspectionResult inspectGoodsInfoWithPhotos(Goods goods, MultipartFile[] files);
+    InspectionResult inspectGoodsInfoWithPhotos(Goods goods, MultipartFile[] files, String forbiddenWords);
 
     /**
      * DB에서 읽어온 기존 파일들을 사용하여 상품 정보를 검수합니다.
@@ -24,6 +24,7 @@ public interface InspectService {
      * @param fileContents 기존 파일들의 내용이 담긴 DTO 리스트
      * @return 검수 결과
      */
-    InspectionResult inspectGoodsInfoWithPhotos(Goods goods, List<FileContent> fileContents);
+    InspectionResult inspectGoodsInfoWithPhotos(Goods goods, List<FileContent> fileContents, String forbiddenWords);
 	
+    
 }

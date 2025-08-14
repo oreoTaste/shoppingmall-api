@@ -59,7 +59,7 @@ public abstract class AbstractInspectService implements InspectService {
      * @return 검수 결과
      * @throws IOException 파일 처리 오류
      */
-    protected abstract InspectionResult performAiInspection(Goods goods, NaverShoppingResponse naverResponse, MultipartFile[] files) throws IOException;
+    protected abstract InspectionResult performAiInspection(Goods goods, NaverShoppingResponse naverResponse, MultipartFile[] files, String forbiddenWords) throws IOException;
     
     /**
      * AI 모델에 특화된 실제 검수 로직을 수행합니다. (오버로딩)
@@ -68,24 +68,25 @@ public abstract class AbstractInspectService implements InspectService {
      * @param fileContents 검수용 기존 이미지 파일 정보
      * @return 검수 결과
      */
-    protected abstract InspectionResult performAiInspection(Goods goods, NaverShoppingResponse naverResponse, List<FileContent> fileContents);
+    protected abstract InspectionResult performAiInspection(Goods goods, NaverShoppingResponse naverResponse, List<FileContent> fileContents, String forbiddenWords);
     
     
     // --- 인터페이스를 구현하는 공통 메소드 ---
 
     @Override
-    public final InspectionResult inspectGoodsInfoWithPhotos(Goods goods, MultipartFile[] files) {
+    public final InspectionResult inspectGoodsInfoWithPhotos(Goods goods, MultipartFile[] files, String forbiddenWords) {
         try {
+        	
             // 1. 공통 전처리: 구매가-판매가 확인
             if (goods.getBuyPrice() > goods.getSalesPrice()) {
-                return InspectionResult.reject("구매가가 판매가보다 높을 수 없습니다.");
+                return InspectionResult.reject(9, "구매가가 판매가보다 높을 수 없습니다.", getInspectorId());
             }
             // 2. 공통 전처리: 네이버 쇼핑 검색 및 가격 검증
             NaverShoppingResponse naverResponse = searchNaverShopping(goods.getGoodsName());
             validatePriceRange(goods.getSalesPrice(), naverResponse);
             
             // 3. AI별 실제 검수는 자식 클래스에 위임
-            return performAiInspection(goods, naverResponse, files);
+            return performAiInspection(goods, naverResponse, files, forbiddenWords);
 
         } catch (Exception e) {
             return handleException(e);
@@ -93,18 +94,18 @@ public abstract class AbstractInspectService implements InspectService {
     }
 
     @Override
-    public final InspectionResult inspectGoodsInfoWithPhotos(Goods goods, List<FileContent> fileContents) {
+    public final InspectionResult inspectGoodsInfoWithPhotos(Goods goods, List<FileContent> fileContents, String forbiddenWords) {
         try {
             // 1. 공통 전처리: 구매가-판매가 확인
             if (goods.getBuyPrice() > goods.getSalesPrice()) {
-                return InspectionResult.reject("구매가가 판매가보다 높을 수 없습니다.");
+                return InspectionResult.reject(9, "구매가가 판매가보다 높을 수 없습니다.", getInspectorId());
             }
             // 2. 공통 전처리: 네이버 쇼핑 검색 및 가격 검증
             NaverShoppingResponse naverResponse = searchNaverShopping(goods.getGoodsName());
             validatePriceRange(goods.getSalesPrice(), naverResponse);
 
             // 3. AI별 실제 검수는 자식 클래스에 위임
-            return performAiInspection(goods, naverResponse, fileContents);
+            return performAiInspection(goods, naverResponse, fileContents, forbiddenWords);
 
         } catch (Exception e) {
             return handleException(e);
@@ -112,6 +113,8 @@ public abstract class AbstractInspectService implements InspectService {
     }
 
     // --- 공통 Private Helper Methods ---
+    protected abstract String getInspectorId();
+    
     private NaverShoppingResponse searchNaverShopping(String productName) {
         log.info("네이버 쇼핑 검색 API 호출: {}", productName);
         // 1. URI 객체를 미리 생성합니다.
@@ -167,17 +170,17 @@ public abstract class AbstractInspectService implements InspectService {
                       webClientException.getStatusCode(), responseBody, webClientException);
             
             // 에러 메시지에 응답 내용 일부를 포함하여 반환
-            return InspectionResult.reject("AI 검수 서버 오류: " + responseBody);
+            return InspectionResult.reject(9, "AI 검수 서버 오류: " + responseBody, "exception");
 
         } else if (e instanceof IllegalArgumentException) {
             log.warn("가격 검증 실패: {}", e.getMessage());
-            return InspectionResult.reject(e.getMessage());
+            return InspectionResult.reject(9, e.getMessage(), "exception");
         } else if (e instanceof IOException) {
             log.error("파일 처리 중 오류 발생", e);
-            return InspectionResult.reject("파일을 처리하는 중 오류가 발생했습니다.");
+            return InspectionResult.reject(9, "파일을 처리하는 중 오류가 발생했습니다.", "exception");
         } else {
             log.error("알 수 없는 오류 발생", e);
-            return InspectionResult.reject("AI 검수 중 알 수 없는 오류가 발생했습니다.");
+            return InspectionResult.reject(9, "AI 검수 중 알 수 없는 오류가 발생했습니다.", "exception");
         }
     }
 }
