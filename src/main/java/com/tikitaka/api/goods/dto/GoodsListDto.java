@@ -31,6 +31,16 @@ public class GoodsListDto extends CommonEntity {
 	// ai검수여부
 	private String aiCheckYn;
 	
+	private String lgroup; // 대분류
+	private String lgroupName; // 대분류명
+	private String mgroup; // 중분류
+	private String mgroupName; // 중분류명
+	private String dgroup; // 소분류
+	private String dgroupName; // 소분류명
+	private String sgroup; // 세분류
+	private String sgroupName; // 세분류명
+
+	
 	// 모든 필드를 포함하는 생성자
 	public GoodsListDto(Long goodsId, String goodsName, String mobileGoodsName, Long salesPrice, Long buyPrice, String origin, Long insertId, Long updateId) {
 		this.goodsId = goodsId;

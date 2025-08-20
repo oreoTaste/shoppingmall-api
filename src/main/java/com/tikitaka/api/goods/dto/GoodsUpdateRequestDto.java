@@ -14,6 +14,12 @@ public class GoodsUpdateRequestDto {
     private String buyPrice;
     private String origin;
     private String imageType;
+    
+    private String lgroup;
+    private String mgroup;
+    private String sgroup;
+    private String dgroup;
+    
     private MultipartFile[] representativeFile;
     private MultipartFile[] files;
     private String imageHtml;

@@ -73,6 +73,7 @@ public class GoodsController {
             return ResponseEntity.ok(ApiResponseDto.success("상품을 성공적으로 검수했습니다.", result));
         } catch (IllegalArgumentException e) {
             log.warn("상품 검수 중 유효성 검사 실패: {}", e.getMessage());
+            e.printStackTrace();
             return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                     .body(ApiResponseDto.fail(e.getMessage()));
         } catch (IOException e) {

@@ -6,6 +6,8 @@ import java.time.Instant;
 import java.time.LocalDate;
 
 import com.tikitaka.api.forbiddenWord.entity.ForbiddenWord;
+
+import ch.qos.logback.core.util.StringUtil;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -40,12 +42,12 @@ public class ForbiddenWordAddDto {
         // 클라이언트에서 값을 보내지 않은 경우, 기본값을 설정합니다.
         forbiddenWord.setStartDate(this.startDate != null ? this.startDate : Date.valueOf(LocalDate.now()));
         forbiddenWord.setEndDate(this.endDate != null ? this.endDate : Date.valueOf("9999-12-31"));
-        forbiddenWord.setReason(this.reason);
-        forbiddenWord.setCompanyCode(this.companyCode);
-        forbiddenWord.setLgroup(this.getLgroup());
-        forbiddenWord.setMgroup(this.getMgroup());
-        forbiddenWord.setSgroup(this.getSgroup());
-        forbiddenWord.setDgroup(this.getDgroup());
+        forbiddenWord.setReason(StringUtil.isNullOrEmpty(this.reason) ? null : this.reason);
+        forbiddenWord.setCompanyCode(StringUtil.isNullOrEmpty(this.companyCode) ? null : this.companyCode);
+        forbiddenWord.setLgroup(StringUtil.isNullOrEmpty(this.getLgroup()) ? null : this.getLgroup());
+        forbiddenWord.setMgroup(StringUtil.isNullOrEmpty(this.getMgroup()) ? null : this.getMgroup());
+        forbiddenWord.setSgroup(StringUtil.isNullOrEmpty(this.getSgroup()) ? null : this.getSgroup());
+        forbiddenWord.setDgroup(StringUtil.isNullOrEmpty(this.getDgroup()) ? null : this.getDgroup());
 
         return forbiddenWord;
     }

@@ -51,7 +51,7 @@ public class DBGoodsRepository implements GoodsRepository {
     public Goods save(Goods goods) {
         // goods_id 자동 생성을 위한 KeyHolder
         KeyHolder keyHolder = new GeneratedKeyHolder();
-        String sql = "INSERT INTO public.goods (goods_name, mobile_goods_name, sales_price, buy_price, origin, insert_id, update_id, ai_check_yn) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO public.goods (goods_name, mobile_goods_name, sales_price, buy_price, origin, insert_id, update_id, ai_check_yn, lgroup, mgroup, sgroup, dgroup) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
         jdbcTemplate.update(connection -> {
             // PreparedStatement 생성 시 Statement.RETURN_GENERATED_KEYS 옵션을 사용하여 자동 생성된 키를 반환받습니다.
@@ -64,6 +64,10 @@ public class DBGoodsRepository implements GoodsRepository {
             ps.setLong(6, goods.getInsertId());
             ps.setLong(7, goods.getUpdateId());
             ps.setString(8, goods.getAiCheckYn());
+            ps.setString(9, goods.getLgroup());
+            ps.setString(10, goods.getMgroup());
+            ps.setString(11, goods.getSgroup());
+            ps.setString(12, goods.getDgroup());
             return ps;
         }, keyHolder);
 
@@ -89,12 +93,16 @@ public class DBGoodsRepository implements GoodsRepository {
         List<Object> params = new ArrayList<>();
 
         // 필수 업데이트 필드
-        sqlBuilder.append("goods_name = ?, mobile_goods_name = ?, sales_price = ?, buy_price = ?, update_id = ?, modified_at = NOW()");
+        sqlBuilder.append("goods_name = ?, mobile_goods_name = ?, sales_price = ?, buy_price = ?, update_id = ?, modified_at = NOW(), lgroup = ?, mgroup = ?, sgroup = ?, dgroup = ?");
         params.add(goods.getGoodsName());
         params.add(goods.getMobileGoodsName());
         params.add(goods.getSalesPrice());
         params.add(goods.getBuyPrice());
         params.add(goods.getUpdateId());
+        params.add(goods.getLgroup());
+        params.add(goods.getMgroup());
+        params.add(goods.getSgroup());
+        params.add(goods.getDgroup());
 
         // ai_check_yn이 null이 아닌 경우에만 추가
         if (goods.getAiCheckYn() != null) {
@@ -128,12 +136,32 @@ public class DBGoodsRepository implements GoodsRepository {
      */
     @Override
     public List<GoodsListDto> findAllbyPeriodWithFiles() {
-        String sql = "SELECT " +
-                     "    a.goods_id, a.goods_name, a.mobile_goods_name, a.sales_price, a.buy_price, " +
-                     "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, a.ai_check_yn, " +
-                     "    b.representative_yn, b.file_type, b.files_id, b.file_path, b.file_name " + // files 테이블의 정보
-                     "FROM public.goods a LEFT OUTER JOIN public.files b ON a.goods_id = b.goods_id " +
-                     "ORDER BY a.goods_id ASC, b.files_id ASC"; // 정렬을 추가하여 그룹핑을 용이하게 합니다.
+        String sql = "SELECT                                                                                       " +
+                     "    a.goods_id, a.goods_name, a.mobile_goods_name, a.sales_price, a.buy_price,               " +
+                     "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, a.ai_check_yn,           " +
+                     "    a.lgroup,																			       " + 
+                     "    (select aa.name																	       " +
+                     "       from category aa																       " +
+                     "      where aa.code = a.lgroup and aa.level = 1										       " +
+                     "        and aa.parent_code is null) lgroup_name,     								           " +
+                     "    a.mgroup, 																			   " +
+                     "    (select aa.name																		   " +
+                     "       from category aa																	   " +
+                     "      where aa.code = a.mgroup and aa.level = 2											   " +
+                     "        and aa.parent_code = a.lgroup) mgroup_name,  										   " +
+                     "    a.sgroup, 																			   " +
+                     "    (select aa.name																		   " +
+                     "       from category aa																	   " +
+                     "      where aa.code = a.sgroup and aa.level = 3											   " +
+                     "        and aa.parent_code = a.lgroup || a.mgroup) sgroup_name,							   " +
+                     "    a.dgroup,                                       										   " +
+                     "    (select aa.name                                 										   " +
+                     "       from category aa                             										   " +
+                     "      where aa.code = a.dgroup and aa.level = 4     										   " +
+                     "        and aa.parent_code = a.lgroup || a.mgroup || a.sgroup) dgroup_name, 				   " +
+                     "    b.representative_yn, b.file_type, b.files_id, b.file_path, b.file_name                   " + // files 테이블의 정보
+                     "FROM public.goods a LEFT OUTER JOIN public.files b ON a.goods_id = b.goods_id                " +
+                     "ORDER BY a.goods_id ASC, b.files_id ASC                                                      "; // 정렬을 추가하여 그룹핑을 용이하게 합니다.
         
         return jdbcTemplate.query(sql, new GoodsWithFilesResultSetExtractor());
     }
@@ -167,6 +195,14 @@ public class DBGoodsRepository implements GoodsRepository {
                     goods.setInsertAt(rs.getDate("insert_at"));
                     goods.setModifiedAt(rs.getDate("modified_at"));
                     goods.setAiCheckYn(rs.getString("ai_check_yn"));
+                    goods.setLgroup(rs.getString("lgroup"));
+                    goods.setLgroupName(rs.getString("lgroup_name"));
+                    goods.setMgroup(rs.getString("mgroup"));
+                    goods.setMgroupName(rs.getString("mgroup_name"));
+                    goods.setSgroup(rs.getString("sgroup"));
+                    goods.setSgroupName(rs.getString("sgroup_name"));
+                    goods.setDgroup(rs.getString("dgroup"));
+                    goods.setDgroupName(rs.getString("dgroup_name"));
                     goodsMap.put(goodsId, goods);
                 }
 
@@ -198,13 +234,33 @@ public class DBGoodsRepository implements GoodsRepository {
 	public GoodsListDto findbyPeriodWithFiles(Long goodsId) {
         // DB 스키마에 맞는 컬럼명 'goods_id'로 수정
         String sql = "SELECT " +
-                     "    a.goods_id, a.goods_name, a.mobile_goods_name, a.sales_price, a.buy_price, " +
-                     "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, a.ai_check_yn, " +
-                     "    b.representative_yn, b.file_type, b.files_id, b.file_path, b.file_name " +
-                     "FROM public.goods a LEFT OUTER JOIN public.files b " + 
-                     "ON a.goods_id = b.goods_id " +
-                     "WHERE a.goods_id = ? " + // WHERE 절의 컬럼명 수정
-                     "ORDER BY a.goods_id ASC, b.files_id ASC";
+                     "    a.goods_id, a.goods_name, a.mobile_goods_name, a.sales_price, a.buy_price,               " +
+                     "    a.origin, a.insert_at, a.insert_id, a.modified_at, a.update_id, a.ai_check_yn,           " +
+                     "    a.lgroup,																			       " + 
+                     "    (select aa.name																	       " +
+                     "       from category aa																       " +
+                     "      where aa.code = a.lgroup and aa.level = 1										       " +
+                     "        and aa.parent_code is null) lgroup_name,     								           " +
+                     "    a.mgroup, 																			   " +
+                     "    (select aa.name																		   " +
+                     "       from category aa																	   " +
+                     "      where aa.code = a.mgroup and aa.level = 2											   " +
+                     "        and aa.parent_code = a.lgroup) mgroup_name,  										   " +
+                     "    a.sgroup, 																			   " +
+                     "    (select aa.name																		   " +
+                     "       from category aa																	   " +
+                     "      where aa.code = a.sgroup and aa.level = 3											   " +
+                     "        and aa.parent_code = a.lgroup || a.mgroup) sgroup_name,							   " +
+                     "    a.dgroup,                                       										   " +
+                     "    (select aa.name                                 										   " +
+                     "       from category aa                             										   " +
+                     "      where aa.code = a.dgroup and aa.level = 4     										   " +
+                     "        and aa.parent_code = a.lgroup || a.mgroup || a.sgroup) dgroup_name, 				   " +
+                     "    b.representative_yn, b.file_type, b.files_id, b.file_path, b.file_name                   " +
+                     "FROM public.goods a LEFT OUTER JOIN public.files b                                           " + 
+                     "ON a.goods_id = b.goods_id                                                                   " +
+                     "WHERE a.goods_id = ?                                                                         " +
+                     "ORDER BY a.goods_id ASC, b.files_id ASC                                                      ";
         
         // jdbcTemplate.query와 ResultSetExtractor를 사용하여 1:N 관계의 데이터를 조회합니다.
         // query 메소드의 파라미터로 sql, ResultSetExtractor, 그리고 sql의 '?'에 바인딩 될 값을 순서대로 전달합니다.
@@ -228,7 +284,14 @@ public class DBGoodsRepository implements GoodsRepository {
      */
     @Override
     public Goods findById(Long goodsId) {
-        String sql = "SELECT goods_id, goods_name, mobile_goods_name, sales_price, buy_price, origin, insert_at, insert_id, modified_at, update_id, ai_check_yn FROM public.goods WHERE goods_id = ?";
+        String sql = "SELECT goods_id, goods_name, mobile_goods_name, sales_price, buy_price, origin,                 " +
+        			 "       insert_at, insert_id, modified_at, update_id, ai_check_yn,                               " +
+                     "       a.lgroup,																			      " + 
+                     "       a.mgroup, 																			      " +
+                     "       a.sgroup, 																			      " +
+                     "       a.dgroup                                       										  " +
+        			 "  FROM public.goods a                                                                           " +
+        			 " WHERE goods_id = ?                                                                             ";
         try {
             return jdbcTemplate.queryForObject(sql, new RowMapper<Goods>() {
                 @Override
@@ -245,6 +308,10 @@ public class DBGoodsRepository implements GoodsRepository {
                     goods.setModifiedAt(rs.getDate("modified_at")); // Use getTimestamp for date/time fields
                     goods.setUpdateId(rs.getLong("update_id"));
                     goods.setAiCheckYn(rs.getString("ai_check_yn"));
+                    goods.setLgroup(rs.getString("lgroup"));
+                    goods.setMgroup(rs.getString("mgroup"));
+                    goods.setSgroup(rs.getString("sgroup"));
+                    goods.setDgroup(rs.getString("dgroup"));
                     return goods;
                 }
             }, goodsId);

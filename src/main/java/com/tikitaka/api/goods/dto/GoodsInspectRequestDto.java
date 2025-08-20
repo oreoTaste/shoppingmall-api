@@ -25,6 +25,11 @@ public class GoodsInspectRequestDto {
     private String imageHtml;
     private MultipartFile[] representativeFile;
     private MultipartFile[] imageFiles;
+    private String lgroup;
+    private String mgroup;
+    private String sgroup;
+    private String dgroup;
+    
 
     /**
      * 요청 DTO를 Goods 엔티티로 변환합니다.

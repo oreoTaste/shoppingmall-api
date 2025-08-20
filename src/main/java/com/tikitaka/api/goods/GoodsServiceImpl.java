@@ -83,7 +83,18 @@ public class GoodsServiceImpl implements GoodsService {
         );
         
         ForbiddenWordSearchParam searchParam = new ForbiddenWordSearchParam();
-//        searchParam.setCompanyCode(null);
+        if(StringUtil.isNullOrEmpty(request.getGoodsId())) {
+            searchParam.setLgroup(StringUtil.isNullOrEmpty(goods.getLgroup()) ? null : goods.getLgroup());
+            searchParam.setMgroup(StringUtil.isNullOrEmpty(goods.getMgroup()) ? null : goods.getMgroup());
+            searchParam.setSgroup(StringUtil.isNullOrEmpty(goods.getSgroup()) ? null : goods.getSgroup());
+            searchParam.setDgroup(StringUtil.isNullOrEmpty(goods.getDgroup()) ? null : goods.getDgroup());
+        } else {
+            Goods dbGoods = goodsRepository.findById(Long.valueOf(request.getGoodsId()));
+            searchParam.setLgroup(StringUtil.isNullOrEmpty(goods.getLgroup()) ? dbGoods.getLgroup() : goods.getLgroup());
+            searchParam.setMgroup(StringUtil.isNullOrEmpty(goods.getMgroup()) ? dbGoods.getMgroup() : goods.getMgroup());
+            searchParam.setSgroup(StringUtil.isNullOrEmpty(goods.getSgroup()) ? dbGoods.getSgroup() : goods.getSgroup());
+            searchParam.setDgroup(StringUtil.isNullOrEmpty(goods.getDgroup()) ? dbGoods.getDgroup() : goods.getDgroup());
+        }
         
         // 금칙어 목록 준비하기
         List<ForbiddenWord> forbiddenWordsList = forbiddenWordRepository.findActiveForbiddenWords(searchParam);
@@ -121,6 +132,12 @@ public class GoodsServiceImpl implements GoodsService {
             userDetails.getMemberId(),
             userDetails.getMemberId()
         );
+
+        newGoods.setLgroup(StringUtil.isNullOrEmpty(request.getLgroup()) ? null : request.getLgroup());
+        newGoods.setMgroup(StringUtil.isNullOrEmpty(request.getMgroup()) ? null : request.getMgroup());
+        newGoods.setSgroup(StringUtil.isNullOrEmpty(request.getSgroup()) ? null : request.getSgroup());
+        newGoods.setDgroup(StringUtil.isNullOrEmpty(request.getDgroup()) ? null : request.getDgroup());
+        
         newGoods.setAiCheckYn(request.getAiCheckYn() == null || request.getAiCheckYn().isEmpty() ? "N" : request.getAiCheckYn());
 
         Goods savedGoods = goodsRepository.save(newGoods);
@@ -132,7 +149,7 @@ public class GoodsServiceImpl implements GoodsService {
         if ("html".equals(request.getImageType())) {
             filesService.save(savedGoods, request.getImageHtml(), userDetails);
         } else {
-            MultipartFile[] splittedImages = imageSplittingService.splitImages(request.getImageFiles(), 1600);
+            MultipartFile[] splittedImages = imageSplittingService.splitImages(request.getFiles(), 1600);
             filesService.save(savedGoods, splittedImages, userDetails);
         }
 
@@ -152,6 +169,11 @@ public class GoodsServiceImpl implements GoodsService {
                 null, // insertId는 업데이트하지 않음
                 userDetails.getMemberId() // updateId 설정
         );
+        
+        goodsToUpdate.setLgroup(request.getLgroup());
+        goodsToUpdate.setMgroup(request.getMgroup());
+        goodsToUpdate.setSgroup(request.getSgroup());
+        goodsToUpdate.setDgroup(request.getDgroup());
 
         if ("html".equals(request.getImageType())) {
             return this.updateWithFiles(goodsToUpdate, request.getRepresentativeFile(), request.getImageHtml(), userDetails);

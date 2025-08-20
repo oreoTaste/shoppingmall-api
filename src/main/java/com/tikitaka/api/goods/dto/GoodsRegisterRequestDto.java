@@ -14,7 +14,13 @@ public class GoodsRegisterRequestDto {
     private String origin;
     private String imageType;
     private MultipartFile[] representativeFile;
-    private MultipartFile[] imageFiles;
+    private MultipartFile[] files;
     private String imageHtml;
     private String aiCheckYn;
+
+    private String lgroup;
+    private String mgroup;
+    private String sgroup;
+    private String dgroup;
+    
 }

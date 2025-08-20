@@ -40,7 +40,7 @@ public class DBForbiddenWordRepository implements ForbiddenWordRepository {
         StringBuilder sqlBuilder = new StringBuilder(
             "SELECT * FROM forbidden_words " +
             "WHERE start_date <= CURRENT_DATE " +
-            "AND (end_date IS NULL OR end_date >= CURRENT_DATE)"
+            "AND end_date >= CURRENT_DATE"
         );
 
         // 동적 파라미터를 관리할 리스트
@@ -48,19 +48,19 @@ public class DBForbiddenWordRepository implements ForbiddenWordRepository {
 
         // 검색 조건 추가
         if (searchParam.getLgroup() != null && !searchParam.getLgroup().isEmpty()) {
-            sqlBuilder.append(" AND lgroup = ?");
+            sqlBuilder.append(" AND (lgroup is null OR lgroup = ?)");
             params.add(searchParam.getLgroup());
         }
         if (searchParam.getMgroup() != null && !searchParam.getMgroup().isEmpty()) {
-            sqlBuilder.append(" AND mgroup = ?");
+            sqlBuilder.append(" AND (mgroup is null OR mgroup = ?)");
             params.add(searchParam.getMgroup());
         }
         if (searchParam.getSgroup() != null && !searchParam.getSgroup().isEmpty()) {
-            sqlBuilder.append(" AND sgroup = ?");
+            sqlBuilder.append(" AND (sgroup is null OR sgroup = ?)");
             params.add(searchParam.getSgroup());
         }
         if (searchParam.getDgroup() != null && !searchParam.getDgroup().isEmpty()) {
-            sqlBuilder.append(" AND dgroup = ?");
+            sqlBuilder.append(" AND (dgroup is null OR dgroup = ?)");
             params.add(searchParam.getDgroup());
         }
         if (searchParam.getWord() != null && !searchParam.getWord().isEmpty()) {
