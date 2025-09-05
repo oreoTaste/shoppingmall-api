@@ -1,5 +1,6 @@
 package com.tikitaka.api.goods;
 
+import com.tikitaka.api.batch.goods.GoodsBatchService;
 import com.tikitaka.api.global.dto.ApiResponseDto;
 import com.tikitaka.api.goods.dto.GoodsInspectRequestDto;
 import com.tikitaka.api.goods.dto.GoodsListDto;
@@ -14,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.util.List;
@@ -25,6 +27,7 @@ import java.util.List;
 public class GoodsController {
 
     private final GoodsService goodsService;
+    private final GoodsBatchService goodsBatchService;
 
     /**
      * 모든 상품 목록을 조회합니다.
@@ -87,6 +90,24 @@ public class GoodsController {
         }
     }
 
+    /**
+     * 상품 정보와 이미지를 받아 검수합니다.
+     *
+     * @param request     검수 요청 정보 (DTO)
+     * @param userDetails 인증된 사용자 정보
+     * @return 검수 결과
+     */
+    @PostMapping("/inspect/batch")
+    public ResponseEntity<String> inspectGoodsBatch(@RequestParam("file") MultipartFile zipFile) {
+        if (zipFile.isEmpty() || !zipFile.getOriginalFilename().toLowerCase().endsWith(".zip")) {
+            return ResponseEntity.badRequest().body("ZIP 파일만 업로드할 수 있습니다.");
+        }
+        
+        goodsBatchService.processGoodsInspectionBatch(zipFile);
+        
+        return ResponseEntity.ok("배치 처리 요청이 성공적으로 접수되었습니다. 처리 완료 후 알림을 확인하세요.");
+    }
+    
     /**
      * 상품 정보와 이미지 파일을 함께 받아 상품을 등록합니다.
      *

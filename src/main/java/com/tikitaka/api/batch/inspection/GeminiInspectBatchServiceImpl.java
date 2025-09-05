@@ -1,4 +1,4 @@
-package com.tikitaka.api.inspection;
+package com.tikitaka.api.batch.inspection;
 
 import com.tikitaka.api.goods.entity.Goods;
 import com.tikitaka.api.inspection.dto.*;
@@ -21,19 +21,17 @@ import java.util.stream.Collectors;
 @Service
 @Qualifier("geminiInspectService")
 @Primary // 기본 구현체로 지정
-public class GeminiInspectServiceImpl extends AbstractInspectService {
+public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
 
     private final String geminiApiKey;
     private final String geminiApiUrl;
     private final String geminiModelName;
-    public GeminiInspectServiceImpl(WebClient.Builder webClientBuilder,
+    public GeminiInspectBatchServiceImpl(WebClient.Builder webClientBuilder,
                                     @Value("${gemini.api.key}") String geminiApiKey,
                                     @Value("${gemini.api.url}") String geminiApiUrl,
-                                    @Value("${gemini.api.model_name}") String geminiModelName,
-                                    @Value("${naver.api.clientId}") String naverClientId,
-                                    @Value("${naver.api.clientSecret}") String naverClientSecret) {
+                                    @Value("${gemini.api.model_name}") String geminiModelName) {
         // 부모 클래스에 공통 의존성 전달
-        super(webClientBuilder, naverClientId, naverClientSecret);
+        super(webClientBuilder);
         // 자신에게만 필요한 의존성 초기화
         this.geminiApiKey = geminiApiKey;
         this.geminiApiUrl = geminiApiUrl;
@@ -41,11 +39,11 @@ public class GeminiInspectServiceImpl extends AbstractInspectService {
     }
 
     @Override
-    protected InspectionResult performAiInspectionWithPriceInfo(Goods goods, NaverShoppingResponse naverResponse, MultipartFile[] files, String forbiddenWords) throws IOException {
+    public InspectionResult performAiInspection(Goods goods, MultipartFile[] files, String forbiddenWords) throws IOException {
         // 1. Gemini 요청 형식에 맞게 파일 변환
         List<GeminiRequest.Part> imageParts = createPartsFromMultipartFiles(files);
         // 2. Gemini API 요청 본문 생성
-        GeminiRequest requestBody = createGeminiRequest(goods, imageParts, naverResponse, forbiddenWords);
+        GeminiRequest requestBody = createGeminiRequest(goods, imageParts, forbiddenWords);
         // 3. Gemini API 호출
         GeminiResponse geminiResponse = callGeminiApi(requestBody);
         // 4. Gemini 응답 파싱 및 반환
@@ -53,11 +51,11 @@ public class GeminiInspectServiceImpl extends AbstractInspectService {
     }
     
     @Override
-    protected InspectionResult performAiInspectionWithPriceInfo(Goods goods, NaverShoppingResponse naverResponse, List<FileContent> fileContents, String forbiddenWords) {
+    public InspectionResult performAiInspection(Goods goods, List<FileContent> fileContents, String forbiddenWords) {
         // 1. Gemini 요청 형식에 맞게 파일 변환
         List<GeminiRequest.Part> imageParts = createPartsFromFileContents(fileContents);
         // 2. Gemini API 요청 본문 생성
-        GeminiRequest requestBody = createGeminiRequest(goods, imageParts, naverResponse, forbiddenWords);
+        GeminiRequest requestBody = createGeminiRequest(goods, imageParts, forbiddenWords);
         // 3. Gemini API 호출
         GeminiResponse geminiResponse = callGeminiApi(requestBody);
         // 4. Gemini 응답 파싱 및 반환
@@ -100,9 +98,9 @@ public class GeminiInspectServiceImpl extends AbstractInspectService {
         return imageParts;
     }
 
-    private GeminiRequest createGeminiRequest(Goods goods, List<GeminiRequest.Part> imageParts, NaverShoppingResponse naverResponse, String forbiddenWords) {
+    private GeminiRequest createGeminiRequest(Goods goods, List<GeminiRequest.Part> imageParts, String forbiddenWords) {
         List<GeminiRequest.Part> parts = new ArrayList<>();
-        parts.add(new GeminiRequest.Part(createPrompt(goods, naverResponse, forbiddenWords)));
+        parts.add(new GeminiRequest.Part(createPrompt(goods, forbiddenWords)));
         parts.addAll(imageParts);
         return new GeminiRequest(List.of(new GeminiRequest.Content(parts)));
     }
@@ -167,17 +165,7 @@ public class GeminiInspectServiceImpl extends AbstractInspectService {
         }
     }
 
-    private String createPrompt(Goods goods, NaverShoppingResponse naverResponse, String forbiddenWords) {
-        String marketPriceInfo = "정보 없음";
-        if (naverResponse != null && naverResponse.getItems() != null && !naverResponse.getItems().isEmpty()) {
-            marketPriceInfo = naverResponse.getItems().stream()
-                    .map(item -> {
-                        String cleanedTitle = item.getTitle().replaceAll("<[^>]*>", "");
-                        return String.format("[상품명: %s, 최저가: %s원]", cleanedTitle, item.getLprice());
-                    })
-                    .collect(Collectors.joining(", "));
-        }
-        
+    private String createPrompt(Goods goods, String forbiddenWords) {
         String prompt = String.format(
                 """
                 너는 정해진 규칙을 철저히 따르는 쇼핑몰 상품 검수 AI다. 너의 유일한 임무는 아래 '검수 절차'를 1번부터 순서대로 수행하고, 첫 번째 위반 항목이 발견되는 즉시 '출력 규칙'에 따라 최종 결론만 내리는 것이다.
@@ -196,7 +184,6 @@ public class GeminiInspectServiceImpl extends AbstractInspectService {
                 - **판매가:** %,d원
                 - **구매가:** %,d원
                 - **원산지:** %s
-                - **참고용 네이버 쇼핑 검색 결과:** [%s]
                 - **금칙어 목록:** [%s]
 
                 ### 출력 규칙
@@ -218,11 +205,11 @@ public class GeminiInspectServiceImpl extends AbstractInspectService {
                 goods.getSalesPrice(),
                 goods.getBuyPrice(),
                 goods.getOrigin(),
-                marketPriceInfo,
                 forbiddenWords
         );
         log.info("생성된 프롬프트:\n{}", prompt);
         return prompt;
     }
+
 
 }

@@ -31,7 +31,13 @@ dependencies {
     // [추가] WebClient를 사용하기 위한 WebFlux 의존성
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
     
+    // csv파일 관련 라이브러리
+    implementation 'com.opencsv:opencsv:5.7.1'
+    
     implementation 'org.mybatis.spring.boot:mybatis-spring-boot-starter:3.0.4'
+    
+    implementation 'commons-io:commons-io:2.11.0'
+    
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
