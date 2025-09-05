@@ -59,7 +59,7 @@ public abstract class AbstractInspectService implements InspectService {
      * @return 검수 결과
      * @throws IOException 파일 처리 오류
      */
-    protected abstract InspectionResult performAiInspection(Goods goods, NaverShoppingResponse naverResponse, MultipartFile[] files, String forbiddenWords) throws IOException;
+    protected abstract InspectionResult performAiInspectionWithPriceInfo(Goods goods, NaverShoppingResponse naverResponse, MultipartFile[] files, String forbiddenWords) throws IOException;
     
     /**
      * AI 모델에 특화된 실제 검수 로직을 수행합니다. (오버로딩)
@@ -68,7 +68,7 @@ public abstract class AbstractInspectService implements InspectService {
      * @param fileContents 검수용 기존 이미지 파일 정보
      * @return 검수 결과
      */
-    protected abstract InspectionResult performAiInspection(Goods goods, NaverShoppingResponse naverResponse, List<FileContent> fileContents, String forbiddenWords);
+    protected abstract InspectionResult performAiInspectionWithPriceInfo(Goods goods, NaverShoppingResponse naverResponse, List<FileContent> fileContents, String forbiddenWords);
     
     
     // --- 인터페이스를 구현하는 공통 메소드 ---
@@ -86,7 +86,7 @@ public abstract class AbstractInspectService implements InspectService {
             validatePriceRange(goods.getSalesPrice(), naverResponse);
             
             // 3. AI별 실제 검수는 자식 클래스에 위임
-            return performAiInspection(goods, naverResponse, files, forbiddenWords);
+            return performAiInspectionWithPriceInfo(goods, naverResponse, files, forbiddenWords);
 
         } catch (Exception e) {
             return handleException(e);
@@ -105,13 +105,13 @@ public abstract class AbstractInspectService implements InspectService {
             validatePriceRange(goods.getSalesPrice(), naverResponse);
 
             // 3. AI별 실제 검수는 자식 클래스에 위임
-            return performAiInspection(goods, naverResponse, fileContents, forbiddenWords);
+            return performAiInspectionWithPriceInfo(goods, naverResponse, fileContents, forbiddenWords);
 
         } catch (Exception e) {
             return handleException(e);
         }
     }
-
+    
     // --- 공통 Private Helper Methods ---
     protected abstract String getInspectorId();
     

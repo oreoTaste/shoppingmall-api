@@ -37,7 +37,7 @@ public class SecurityConfig {
         http.csrf(AbstractHttpConfigurer::disable);
 
         http.authorizeHttpRequests(authorize -> authorize
-                .requestMatchers("/member/sign-up", "/member/login", "/goods/list").permitAll() // 회원가입과 로그인은 누구나 접근 가능
+                .requestMatchers("/member/sign-up", "/member/login", "/goods/list", "/goods-batch/inspect").permitAll() // 회원가입과 로그인은 누구나 접근 가능
                 .anyRequest().authenticated() // 나머지 모든 요청은 인증 필요
         );
 
