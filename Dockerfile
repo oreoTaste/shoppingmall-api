@@ -23,18 +23,28 @@ RUN gradle build -x test
 # 실제 애플리케이션을 실행할 환경입니다. JRE만 포함된 가벼운 이미지를 사용합니다.
 FROM eclipse-temurin:17-jre-jammy
 
+# 'trn'이라는 이름의 그룹과 사용자를 생성합니다. (UID/GID 1000)
+RUN groupadd -g 1000 trn && \
+    useradd -u 1000 -g 1000 -M -s /bin/sh -p '!' trn
+
 # 작업 디렉터리를 생성합니다.
 WORKDIR /app
+
+# 'trn' 사용자가 /app 디렉터리에 접근할 수 있도록 소유권을 변경합니다.
+RUN chown -R trn:trn /app
 
 # 빌드 환경(builder)의 build/libs 폴더에서 생성된 JAR 파일을 복사해옵니다.
 COPY --from=builder /app/build/libs/*.jar app.jar
 
-# [추가] 컨테이너 내부에 파일이 저장될 디렉토리를 생성합니다.
-# 이 디렉토리가 볼륨과 매핑됩니다.
+# 컨테이너 내부에 파일이 저장될 디렉토리를 생성하고 소유권을 변경합니다.
 RUN mkdir -p /app/uploads
+RUN chown -R trn:trn /app/uploads
 
 # 8080 포트를 외부에 노출하도록 설정합니다.
 EXPOSE 8080
+
+# 앞으로 실행될 모든 명령어는 'trn' 권한으로 실행되도록 설정합니다.
+USER trn
 
 # 컨테이너가 시작될 때 이 명령어를 실행하여 애플리케이션을 구동합니다.
 ENTRYPOINT ["java", "-jar", "app.jar"]
