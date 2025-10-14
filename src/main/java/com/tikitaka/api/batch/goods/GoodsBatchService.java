@@ -33,6 +33,7 @@ import com.amazonaws.services.s3.model.ListObjectsRequest;
 import com.amazonaws.services.s3.model.ObjectListing;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
 
+import org.apache.commons.io.input.BOMInputStream;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Async;
@@ -44,6 +45,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.io.*;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -99,6 +101,7 @@ public class GoodsBatchService {
             // [핵심] 가장 안정적인 RFC4180Parser를 사용하는 파싱 메소드 호출
             List<GoodsBatchDto> goodsDtoList = parseCsvToDto(csvFile);
             log.info("4. CSV 파싱 완료. 총 {}개의 상품 데이터 발견.", goodsDtoList.size());
+            log.info("샘플 데이터 : {}", goodsDtoList.get(0).toString());
 
             if (goodsDtoList.isEmpty()) {
                 log.warn("경고: CSV 파일에서 상품 데이터를 읽어오지 못했습니다.");
@@ -206,8 +209,8 @@ public class GoodsBatchService {
                 	request.setStatus("COMPLETED");
                 	request.setInspectionStatus("COMPLETED");
                 	request.setErrorMessage(null);
-                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", "금칙어가 없습니다.");
-                	return;
+                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null, "금칙어가 없습니다.");
+                	continue;
                 }
                 
                 // 3-3. Gemini API 호출
@@ -219,12 +222,12 @@ public class GoodsBatchService {
                 	request.setStatus("COMPLETED");
                 	request.setInspectionStatus("COMPLETED");
                 	request.setErrorMessage(null);
-                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null);
+                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null, null);
                 } else {
                 	request.setStatus("COMPLETED");
                 	request.setInspectionStatus("FAILED");
-                	request.setErrorMessage(String.format("코드 : %d, 사유 : %s", result.getErrorCode(), result.getReason()));
-                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "FAILED", String.format("코드 : %d, 사유 : %s", result.getErrorCode(), result.getReason()));
+                	request.setErrorMessage(result.getReason());
+                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "FAILED", result.getForbiddenWord(), result.getReason());
                 }
 
             } catch (Exception e) {
@@ -233,15 +236,15 @@ public class GoodsBatchService {
                 // 재시도 횟수가 최대 횟수 미만인 경우
                 if (currentRetries < MAX_RETRIES) {
                     log.info("!! request_id: {} 처리 중 오류 발생. 재시도를 위해 상태를 PENDING으로 변경합니다. (시도: {}) !!", 
-                             request.getRequestId(), currentRetries + 1, e);
+                             request.getRequestId(), currentRetries + 1, e.getMessage());
                     // 재시도 횟수를 1 증가시키고 상태를 다시 PENDING으로 업데이트합니다.
-                    goodsBatchRequestRepository.incrementRetryCount(request.getRequestId());
+                    goodsBatchRequestRepository.incrementRetryCount(request.getRequestId(), e.getMessage());
                 } else {
                     // 최대 재시도 횟수를 초과한 경우
                     log.error("!! request_id: {} 처리 중 심각한 오류 발생 (재시도 횟수 초과: {}) !!", 
-                              request.getRequestId(), MAX_RETRIES, e);
+                              request.getRequestId(), MAX_RETRIES, e.getMessage());
                     // 최종적으로 FAILED 상태로 업데이트합니다.
-                    goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "FAILED", "FAILED", e.getMessage());
+                    goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "FAILED", "FAILED", null, e.getMessage());
                 }                
                 
             } finally {
@@ -360,8 +363,9 @@ public class GoodsBatchService {
         // 1. CSV 표준(RFC 4180)을 따르는 파서를 생성합니다.
         RFC4180Parser rfc4180Parser = new RFC4180ParserBuilder().build();
 
-        // 2. 파일을 읽습니다.
-        try (InputStreamReader reader = new InputStreamReader(new FileInputStream(csvFile))) {
+        // 2. [수정] FileInputStream을 BOMInputStream으로 감싸서 BOM을 자동으로 제거합니다.
+        try (BOMInputStream bomInputStream = new BOMInputStream(new FileInputStream(csvFile));
+             InputStreamReader reader = new InputStreamReader(bomInputStream, StandardCharsets.UTF_8)) {
 
             // 3. 위에서 만든 표준 파서를 사용하여 CSV 리더(Reader)를 생성합니다.
             CSVReader csvReader = new CSVReaderBuilder(reader)

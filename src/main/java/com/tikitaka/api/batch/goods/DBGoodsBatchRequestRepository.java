@@ -93,9 +93,9 @@ public class DBGoodsBatchRequestRepository implements GoodsBatchRequestRepositor
     }
 
     @Override
-    public void updateFinalStatus(Long requestId, String status, String inspectionStatus, String errorMessage) {
-        String sql = "UPDATE goods_batch_request SET status = ?, inspection_status = ?, error_message = ?, updated_at = NOW() WHERE request_id = ?";
-        jdbcTemplate.update(sql, status, inspectionStatus, errorMessage, requestId);
+    public void updateFinalStatus(Long requestId, String status, String inspectionStatus, String forbiddenWord, String errorMessage) {
+        String sql = "UPDATE goods_batch_request SET status = ?, forbidden_word = ?, inspection_status = ?, error_message = ?, updated_at = NOW() WHERE request_id = ?";
+        jdbcTemplate.update(sql, status, forbiddenWord, inspectionStatus, errorMessage, requestId);
     }
 
     @Override
@@ -125,9 +125,9 @@ public class DBGoodsBatchRequestRepository implements GoodsBatchRequestRepositor
      * 재시도 횟수를 1 증가시키고 상태를 다시 PENDING으로 변경하여 다음 스케줄에서 처리되도록 합니다.
      */
     @Override
-    public void incrementRetryCount(Long requestId) {
-        String sql = "UPDATE goods_batch_request SET retries = retries + 1, status = 'PENDING', updated_at = NOW() WHERE request_id = ?";
-        jdbcTemplate.update(sql, requestId);
+    public void incrementRetryCount(Long requestId, String reason) {
+        String sql = "UPDATE goods_batch_request SET retries = retries + 1, status = 'PENDING', updated_at = NOW(), error_message = ? WHERE request_id = ?";
+        jdbcTemplate.update(sql, reason, requestId);
     }
     
     @Override

@@ -193,7 +193,7 @@ public class ChatGPTInspectBatchServiceImpl extends AbstractInspectBatchService 
                 || response.getChoices().get(0).getMessage() == null
                 || response.getChoices().get(0).getMessage().getContent() == null) {
             
-            return InspectionResult.reject(9, "AI 검수 서버로부터 유효한 응답을 받지 못했습니다.", openaiApiModelName);
+            return InspectionResult.reject(null, "AI 검수 서버로부터 유효한 응답을 받지 못했습니다.", openaiApiModelName);
         }
         
         // 2. 응답 텍스트 추출
@@ -211,93 +211,82 @@ public class ChatGPTInspectBatchServiceImpl extends AbstractInspectBatchService 
             // parts가 3개여야 정상 (e.g., ["반려", "1", "원산지 정보 불일치..."])
             if (parts.length == 3) {
                 try {
-                    int failureCode = Integer.parseInt(parts[1].trim());
+                	String forbiddenWord = parts[1].trim();
                     String reason = parts[2].trim();
-                    return InspectionResult.reject(failureCode, reason, openaiApiModelName);
+                    return InspectionResult.reject(forbiddenWord, reason, openaiApiModelName);
                 } catch (NumberFormatException e) {
                     // 실패코드가 숫자가 아닌 경우
                     log.error("ChatGPT 응답의 실패코드를 파싱할 수 없습니다: {}", parts[1]);
-                    return InspectionResult.reject(9, "AI 응답의 실패코드 형식이 올바르지 않습니다: " + textResponse, openaiApiModelName);
+                    return InspectionResult.reject(null, "AI 응답의 실패코드 형식이 올바르지 않습니다: " + textResponse, openaiApiModelName);
                 }
             } else {
                 // "반려"로 시작하지만 형식이 맞지 않는 경우
                 log.warn("ChatGPT 응답이 '반려'로 시작하지만 형식이 올바르지 않습니다: {}", textResponse);
                 String reason = textResponse.length() > 3 ? textResponse.substring(3).trim() : "AI가 등록을 거부했습니다.";
-                return InspectionResult.reject(9, reason, openaiApiModelName);
+                return InspectionResult.reject(null, reason, openaiApiModelName);
             }
 
         } else {
             // "승인" 또는 "반려"로 시작하지 않는 모든 그 외의 경우 (문자열 따옴표 오류 수정)
-            return InspectionResult.reject(9, "AI가 판독 불가 응답을 반환했습니다: " + textResponse, openaiApiModelName);
+            return InspectionResult.reject(null, "AI가 판독 불가 응답을 반환했습니다: " + textResponse, openaiApiModelName);
         }
     }
 
     private String createPromptForCheckForbiddenWords(Goods goods, String forbiddenWords) {
-//        String prompt = String.format(
-//                """
-//                너는 정해진 규칙을 철저히 따르는 쇼핑몰 상품 검수 AI다. 너의 유일한 임무는 아래 '검수 절차'를 1번부터 순서대로 수행하고, 첫 번째 위반 항목이 발견되는 즉시 '출력 규칙'에 따라 최종 결론만 내리는 것이다.
-//
-//                ### 검수 절차 (순서대로 진행하고, 하나라도 위반 시 즉시 중단 및 해당 코드로 반려)
-//                1.  **정보 교차 검증 (실패코드: 1):** '검수 대상 정보'의 텍스트(특히 원산지)와 이미지 내 텍스트 정보가 충돌하는가? (예: 원산지 '국산', 이미지 'Made in China')
-//                2.  **오탈자 검수 (실패코드: 2):** '등록 상품명'("%s") 또는 이미지 내 텍스트에 명백한 오탈자가 있는가?
-//                3.  **상품-이미지 불일치 검수 (실패코드: 3):** 등록 상품명과 이미지 속 핵심 상품이 명백히 다른가?
-//                    - **중요 예외:** 포장 박스 디자인이 다른 것은 허용한다. (예: '사과'를 '참외 박스'에 담아 파는 것은 허용)
-//                    - **반려 예시:** '사과'를 파는데 이미지에 '자동차'가 있는 경우.
-//                4.  **금칙어 포함 여부 검수 (실패코드: 4):** '등록 상품명' 또는 '모바일용 상품명' 또는 이미지 내 텍스트 정보 내에 아래 '금칙어 목록'에 있는 단어가 포함되어 있는가?
-//
-//                ### 검수 대상 정보
-//                - **등록 상품명:** %s
-//                - **모바일용 상품명:** %s
-//                - **판매가:** %,d원
-//                - **구매가:** %,d원
-//                - **금칙어 목록:** [%s]
-//                - **기타 공시사항:** %s
-//
-//                ### 출력 규칙
-//                - 절대 검수 과정이나 생각을 설명하지 말 것.
-//                - **성공 시:** 모든 검수 절차를 통과했을 경우, 오직 '승인' 한 단어만 출력한다.
-//                - **실패 시:** 검수 절차 중 하나라도 위반하는 경우, 즉시 검수를 중단하고 `반려:[실패코드]:[한 문장으로 된 명확한 반려 사유]` 형식으로만 출력한다.
-//                - **[실패 출력 예시]**
-//                - 반려:1:원산지는 국산으로 표기되었으나 이미지에서 Made in China 문구가 확인됩니다.
-//                - 반려:2:등록 상품명에 '달콤한'이 '닳콤한'으로 오타 표기되었습니다.
-//                - 반려:4:상품명에 금칙어인 '예시금칙어1'이 포함되어 있습니다.
-//
-//                검수를 시작하고 최종 결과만 답변하라.
-//                """,
-//                // 검수 절차 2번
-//                goods.getGoodsName(),
-//                // 검수 대상 정보
-//                goods.getGoodsName(),
-//                goods.getMobileGoodsName(),
-//                goods.getSalePrice(),
-//                goods.getBuyPrice(),
-//                forbiddenWords,
-//                goods.getGoodsInfo()
-//        );
-    	
-    	String goodsInfoLine = goods.getGoodsInfo().trim().length() <= 0 ? "" : String.format("\n- **기타 공시사항:** %s", goods.getGoodsInfo().trim());
+    	String goodsInfo = goods.getGoodsInfo();
+    	String cleanedGoodsInfo = "";
+
+    	if (goodsInfo != null && !goodsInfo.trim().isEmpty()) {
+    	    log.info("Original goodsInfo before cleaning: [{}]", goodsInfo);
+    	    cleanedGoodsInfo = goodsInfo.replaceAll("(?s)<[^>]*>", "").trim();
+    	    log.info("Cleaned goodsInfo after regex: [{}]", cleanedGoodsInfo);
+    	}
+
+    	String goodsInfoLine = cleanedGoodsInfo.isEmpty() ? "" : String.format("\n- **기타 공시사항:** %s", cleanedGoodsInfo);
+
     	String prompt = String.format(
     	        """
-    	        너는 쇼핑몰 상품 정보에서 금칙어를 탐지하는 AI다. 너의 유일한 임무는 '검수 대상 텍스트'에 '금칙어 목록'의 단어가 포함되어 있는지 확인하고, '출력 규칙'에 따라 최종 결론만 내리는 것이다.
+    	        너는 쇼핑몰 상품의 텍스트와 이미지에서 금칙어와 그 변형을 탐지하는 AI 검수 시스템이다.
+    	        주어진 입력 정보를 바탕으로 아래 과업과 출력 규칙에 따라 최종 결과만 반환하라.
 
-    	        ### 검수 규칙
-    	        - **금칙어 포함 여부 검수 (실패코드: 4):** '검수 대상 텍스트' 또는 첨부된 이미지 속 텍스트에 '금칙어 목록'에 있는 단어가 하나라도 포함되어 있는가?
-
-    	        ### 검수 대상 텍스트
+    	        ### 입력 정보
+    	        [텍스트 정보]
     	        - **등록 상품명:** %s
     	        - **모바일용 상품명:** %s%s
-    	        
+
+    	        [이미지 정보]
+    	        - 함께 제공된 이미지에서 모든 텍스트를 인식하라.
+
     	        ### 금칙어 목록
-    	        - [%s]
+    	        - %s
+
+    	        ### 수행 과업
+    	        1.  `[텍스트 정보]`와 `[이미지 정보]` 전체에서 `[금칙어 목록]`에 포함된 단어 또는 **이를 의도적으로 변형/우회한 표현**이 있는지 검사하라.
+    	        2.  **[우회 패턴]** 은 아래와 같은 경우를 포함한다.
+    	            - **유사 발음:** '병신' -> '병쉰', '븅신'
+    	            - **특수문자 삽입/대체:** '병신' -> '병!신', '병@신'
+    	            - **자음/모음 분리:** '병신' -> 'ㅂㅅ', 'ㅂㅕㅇㅅㅣㄴ'
+    	            - **기타 오타 및 회피 시도**
+    	        3.  검사 순서는 **등록 상품명 -> 모바일용 상품명 -> 기타 공시사항 -> 이미지 내 텍스트** 순으로 진행한다.
+    	        4.  금칙어 또는 그 변형이 발견되면 즉시 검사를 중단하고 `[출력 규칙]`에 따라 결과를 반환한다.
 
     	        ### 출력 규칙
-    	        - 절대 검수 과정이나 부가적인 설명을 하지 말 것.
-    	        - **금칙어 미포함 시:** 오직 '승인' 한 단어만 출력한다.
-    	        - **금칙어 포함 시:** `반려:4:[금칙어가 포함된 문구]에서 금칙어 '[발견된 금칙어]'가 발견되었습니다.` 형식으로만 출력한다.
-    	        - **[실패 출력 예시]**
-    	        - 반려:4:등록 상품명 '최고급 명품 담배'에서 금칙어 '담배'가 발견되었습니다.
+    	        - **규칙 1 (미포함):** 검사 후 금칙어 및 변형이 발견되지 않으면, 오직 **'승인'** 이라고만 응답한다.
+    	        - **규칙 2 (포함):** 금칙어 또는 그 변형이 발견되면, **가장 먼저 발견된 하나**에 대해서만 `반려:[원본 금칙어]:[사유]` 형식으로 응답한다.
+    	            - **[사유] 작성법:**
+    	                - **텍스트에서 발견 시:** `[검수 항목]에서 금칙어 '[원본 금칙어]'의 변형 표현('[발견된 표현]') 발견`
+    	                - **이미지에서 발견 시:** `이미지에서 금칙어 '[원본 금칙어]'의 변형 표현('[발견된 표현]') 발견`
+    	        - **규칙 3 (예외):** 절대 설명, 인사, 사과 등 다른 말을 덧붙이지 않는다.
 
-    	        검수를 시작하고 최종 결과만 답변하라.
+    	        ### 출력 예시
+    	        - **금칙어가 없는 경우:**
+    	        승인
+    	        - **'등록 상품명'에서 금칙어 '최고'가 발견된 경우:**
+    	        반려:최고:등록 상품명에서 금칙어 '최고'의 변형 표현('최고') 발견
+    	        - **이미지에서 금칙어 '병신'의 변형인 '병!신'이 발견된 경우:**
+    	        반려:병신:이미지에서 금칙어 '병신'의 변형 표현('병!신') 발견
+
+    	        이제 지시사항에 따라 검수를 시작하고 최종 결과만 출력하라.
     	        """,
     	        // 검수 대상 정보
     	        goods.getGoodsName(),
@@ -305,8 +294,8 @@ public class ChatGPTInspectBatchServiceImpl extends AbstractInspectBatchService 
     	        goodsInfoLine,
     	        forbiddenWords
     	);
-        log.info("생성된 프롬프트:\n{}", prompt);
-        return prompt;
+    	log.info("생성된 프롬프트:\n{}", prompt);
+    	return prompt;
     }
 
 }

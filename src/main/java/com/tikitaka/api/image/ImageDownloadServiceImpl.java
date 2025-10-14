@@ -5,6 +5,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import com.tikitaka.api.image.dto.UrlMultipartFile;
 
+import lombok.extern.slf4j.Slf4j;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
+@Slf4j
 @Service
 public class ImageDownloadServiceImpl implements ImageDownloadService{
     /**
@@ -45,8 +48,7 @@ public class ImageDownloadServiceImpl implements ImageDownloadService{
             } catch (IOException e) {
                 // 개별 이미지 다운로드 실패 시 로그를 남기고 계속 진행할 수 있습니다.
                 // 또는 예외를 던져 전체 프로세스를 중단할 수도 있습니다.
-                System.err.println("Failed to download image from URL: " + imageUrl);
-                e.printStackTrace();
+                log.error("Failed to download image from URL: " + imageUrl);
             }
         }
 

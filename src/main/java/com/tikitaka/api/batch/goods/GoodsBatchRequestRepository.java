@@ -32,13 +32,13 @@ public interface GoodsBatchRequestRepository {
      * @param status 변경할 최종 상태
      * @param errorMessage 실패 시 에러 메시지
      */
-    void updateFinalStatus(Long requestId, String status, String inspectionStatus, String errorMessage);
+    void updateFinalStatus(Long requestId, String status, String inspectionStatus, String forbiddenWord, String errorMessage);
 
     /**
      * [추가] 요청의 재시도 횟수를 1 증가시키고 상태를 'PENDING'으로 되돌립니다.
      * @param requestId 재시도할 요청 ID
      */
-    void incrementRetryCount(Long requestId);
+    void incrementRetryCount(Long requestId, String reason);
     
     /**
      * 오래된 배치 기록을 조회합니다.
