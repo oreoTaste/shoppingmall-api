@@ -33,4 +33,11 @@ public interface ForbiddenWordBatchRepository {
      */
     boolean deactivateById(Long id);
 
+    /**
+     * 새로운 금칙어를 동기화합니다(일괄저장)
+     * @param forbiddenWord 저장할 금칙어 객체
+     * @return 저장 성공 여부
+     */
+    boolean saveAll(List<ForbiddenWord> forbiddenWord);
+
 }

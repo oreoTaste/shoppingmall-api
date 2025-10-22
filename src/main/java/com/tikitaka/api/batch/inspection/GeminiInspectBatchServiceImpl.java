@@ -180,9 +180,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
     	String cleanedGoodsInfo = "";
 
     	if (goodsInfo != null && !goodsInfo.trim().isEmpty()) {
-    	    log.info("Original goodsInfo before cleaning: [{}]", goodsInfo);
     	    cleanedGoodsInfo = goodsInfo.replaceAll("(?s)<[^>]*>", "").trim();
-    	    log.info("Cleaned goodsInfo after regex: [{}]", cleanedGoodsInfo);
     	}
 
     	String goodsInfoLine = cleanedGoodsInfo.isEmpty() ? "" : String.format("\n- **기타 공시사항:** %s", cleanedGoodsInfo);

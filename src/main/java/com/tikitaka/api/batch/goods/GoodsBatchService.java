@@ -3,14 +3,15 @@ package com.tikitaka.api.batch.goods;
 import com.amazonaws.util.IOUtils;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.opencsv.CSVParser;
+import com.opencsv.CSVParserBuilder;
 import com.opencsv.CSVReader;
 import com.opencsv.CSVReaderBuilder;
-import com.opencsv.RFC4180Parser;
-import com.opencsv.RFC4180ParserBuilder;
 import com.opencsv.bean.CsvToBeanBuilder;
 import com.opencsv.bean.HeaderColumnNameMappingStrategy;
 import com.tikitaka.api.batch.forbiddenWord.ForbiddenWordBatchRepository;
 import com.tikitaka.api.batch.forbiddenWord.dto.ForbiddenWordSearchParam;
+import com.tikitaka.api.batch.forbiddenWord.dto.HarmfulwordBatchDto;
 import com.tikitaka.api.batch.forbiddenWord.entity.ForbiddenWord;
 import com.tikitaka.api.batch.goods.dto.BatchResultPayload;
 import com.tikitaka.api.batch.goods.dto.GoodsBatchDto;
@@ -47,6 +48,8 @@ import java.io.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -81,6 +84,59 @@ public class GoodsBatchService {
     private final ObjectMapper objectMapper;
     private final ForbiddenWordBatchRepository forbiddenWordBatchRepository;
     private static final int MAX_RETRIES = 3; // 재시도 횟수 상수로 정의
+
+    @Async
+    public boolean processHarmfulwordsBatch(MultipartFile zipFile) {
+    	String originalFileName = Path.of(zipFile.getOriginalFilename()).getFileName().toString();
+    	
+        Path permanentDir = Paths.get(uploadDir, "batch", originalFileName).toAbsolutePath().normalize();
+        log.info("========== 금칙어 배치 처리 시작: zip 파일명 {} ==========", originalFileName);
+
+        try {
+            Files.createDirectories(permanentDir);
+            log.info("processHarmfulwordsBatch 1. 영구 저장 디렉토리 생성 완료: {}", permanentDir);
+
+            unzip(zipFile.getInputStream(), permanentDir);
+            log.info("processHarmfulwordsBatch 2. ZIP 파일 압축 해제 완료.");
+
+            File tsvFile = findTsvFile(permanentDir);
+            log.info("processHarmfulwordsBatch 3. TSV 파일 찾기 완료: {}", tsvFile.getAbsolutePath());
+
+            // [핵심] 가장 안정적인 RFC4180Parser를 사용하는 파싱 메소드 호출
+            List<HarmfulwordBatchDto> harmfulwordDtoList = GoodsBatchService.parseTsvToDto(tsvFile, HarmfulwordBatchDto.class);
+            log.info("processHarmfulwordsBatch 4. TSV 파싱 완료. 총 {}개의 상품 데이터 발견.", harmfulwordDtoList.size());
+            log.info("샘플 데이터 : {}", harmfulwordDtoList.get(0).toString());
+
+            if (harmfulwordDtoList.isEmpty()) {
+                log.warn("경고: TSV 파일에서 상품 데이터를 읽어오지 못했습니다.");
+                return true;
+            }
+
+            List<ForbiddenWord> forbiddenWords = harmfulwordDtoList.stream().map(HarmfulwordBatchDto::toForbiddenWord).toList();
+            
+            forbiddenWordBatchRepository.saveAll(forbiddenWords);
+            log.info("processHarmfulwordsBatch 5. 총 {}건의 상품 검수 요청을 DB에 성공적으로 저장했습니다.", forbiddenWords.size());
+            return true;
+
+        } catch (Exception e) {
+            log.error("!! 상품 배치 처리 중 심각한 오류 발생 (Job ID: {}) !!", originalFileName, e);
+            return false;
+        } finally {
+    		try {
+    			boolean deleted =FileSystemUtils.deleteRecursively(permanentDir); // 이부분에서 오류가 발생
+    			if(deleted) {
+                    log.info("processHarmfulwordsBatch 6. 금칙어 파일 경로 정상 삭제했습니다. zip 파일명 {} ", originalFileName);    				
+    			} else {
+                    log.info("processHarmfulwordsBatch 6. 금칙어 파일 경로 삭제 실패했습니다. zip 파일명 {} ", originalFileName);
+    			}
+                
+    		} catch(IOException e) {
+    			log.error("processHarmfulwordsBatch 6. 금칙어 파일 경로 삭제 중 I/O 오류 발생. zip 파일명 {} ", originalFileName, e);
+    		}
+    		
+            log.info("========== 금칙어 배치 처리 종료: zip 파일명 {} ==========", originalFileName);
+        }
+    }
     
     @Async
     public boolean processGoodsInspectionBatch(MultipartFile zipFile) {
@@ -90,28 +146,25 @@ public class GoodsBatchService {
 
         try {
             Files.createDirectories(permanentDir);
-            log.info("1. 영구 저장 디렉토리 생성 완료: {}", permanentDir);
+            log.info("processGoodsInspectionBatch 1. 영구 저장 디렉토리 생성 완료: {}", permanentDir);
 
             unzip(zipFile.getInputStream(), permanentDir);
-            log.info("2. ZIP 파일 압축 해제 완료.");
+            log.info("processGoodsInspectionBatch 2. ZIP 파일 압축 해제 완료.");
 
-            File csvFile = findCsvFile(permanentDir);
-            log.info("3. CSV 파일 찾기 완료: {}", csvFile.getAbsolutePath());
+            File tsvFile = findTsvFile(permanentDir);
+            log.info("processGoodsInspectionBatch 3. TSV 파일 찾기 완료: {}", tsvFile.getAbsolutePath());
 
-            // [핵심] 가장 안정적인 RFC4180Parser를 사용하는 파싱 메소드 호출
-            List<GoodsBatchDto> goodsDtoList = parseCsvToDto(csvFile);
-            log.info("4. CSV 파싱 완료. 총 {}개의 상품 데이터 발견.", goodsDtoList.size());
+            List<GoodsBatchDto> goodsDtoList = GoodsBatchService.parseTsvToDto(tsvFile, GoodsBatchDto.class);
+            log.info("processGoodsInspectionBatch 4. TSV 파싱 완료. 총 {}개의 상품 데이터 발견.", goodsDtoList.size());
             log.info("샘플 데이터 : {}", goodsDtoList.get(0).toString());
 
             if (goodsDtoList.isEmpty()) {
-                log.warn("경고: CSV 파일에서 상품 데이터를 읽어오지 못했습니다.");
+                log.warn("경고: TSV 파일에서 상품 데이터를 읽어오지 못했습니다.");
                 return true;
             }
 
             List<GoodsBatchRequest> requestEntities = new ArrayList<>();
             for (GoodsBatchDto dto : goodsDtoList) {
-            	
-                // [핵심] 안전한 숫자 변환 로직
                 BigDecimal salePrice = BigDecimal.ZERO;
                 BigDecimal buyPrice = BigDecimal.ZERO;
                 try {
@@ -126,7 +179,6 @@ public class GoodsBatchService {
                             dto.getGoodsName(), dto.getSalePrice(), dto.getBuyPrice());
                 }
                 
-//                String repFilePath = permanentDir.resolve("images/" + dto.getRepresentativeFile()).toString();
                 String repFilePath = dto.getRepresentativeFile().toString();
 
                 GoodsBatchRequest requestEntity = GoodsBatchRequest.builder()
@@ -153,7 +205,7 @@ public class GoodsBatchService {
             }
 
             goodsBatchRequestRepository.saveAll(requestEntities);
-            log.info("5. 총 {}건의 상품 검수 요청을 DB에 성공적으로 저장했습니다.", requestEntities.size());
+            log.info("processGoodsInspectionBatch 5. 총 {}건의 상품 검수 요청을 DB에 성공적으로 저장했습니다.", requestEntities.size());
             return true;
 
         } catch (Exception e) {
@@ -165,6 +217,13 @@ public class GoodsBatchService {
     }
 
     public void processPendingBatchRequests(int batchCount) {
+        String todayDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+    	String s3ReceivedResult = getBatchInStatus(todayDate);
+    	// s3에서 데이터를 정확히 받은 시점부터 구동되도록 처리
+    	if(!s3ReceivedResult.equals("SUCCESS")) {
+    		return;
+    	}
+    	
     	if(batchCount <= 0 || batchCount > 1000) {
     		batchCount = 100;
     	}
@@ -214,11 +273,11 @@ public class GoodsBatchService {
                 }
                 
                 // 3-3. Gemini API 호출
-                InspectionResult result = inspectService.performAiInspection(goods, filesToInspect, forbiddenWords);
-                log.info("Gemini API 호출 결과: 승인여부 = {}, 사유 = {}", result.isApproved(), result.getReason());
+                InspectionResult inspectionResult = inspectService.performAiInspection(goods, filesToInspect, forbiddenWords);
+                log.info("Gemini API 호출 결과: 승인여부 = {}, 사유 = {}", inspectionResult.isApproved(), inspectionResult.getReason());
                 
                 // 3-4. 결과에 따라 DB 상태를 업데이트합니다.
-                if (result.isApproved()) {
+                if (inspectionResult.isApproved()) {
                 	request.setStatus("COMPLETED");
                 	request.setInspectionStatus("COMPLETED");
                 	request.setErrorMessage(null);
@@ -226,8 +285,8 @@ public class GoodsBatchService {
                 } else {
                 	request.setStatus("COMPLETED");
                 	request.setInspectionStatus("FAILED");
-                	request.setErrorMessage(result.getReason());
-                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "FAILED", result.getForbiddenWord(), result.getReason());
+                	request.setErrorMessage(inspectionResult.getReason());
+                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "FAILED", inspectionResult.getForbiddenWord(), inspectionResult.getReason());
                 }
 
             } catch (Exception e) {
@@ -357,27 +416,38 @@ public class GoodsBatchService {
     }
 
     /**
-     * Csv파일을 파싱하는 메서드
+     * Tsv파일을 DTO 리스트로 파싱하는 메서드
+     *
+     * @param tsvFile  파싱할 TSV 파일
+     * @param dtoClass 변환할 DTO 클래스
+     * @param <T>      DTO 타입
+     * @return DTO 객체 리스트
+     * @throws IOException 파일 읽기 오류 시
      */
-    private List<GoodsBatchDto> parseCsvToDto(File csvFile) throws IOException {
-        // 1. CSV 표준(RFC 4180)을 따르는 파서를 생성합니다.
-        RFC4180Parser rfc4180Parser = new RFC4180ParserBuilder().build();
+    public static <T> List<T> parseTsvToDto(File tsvFile, Class<T> dtoClass) throws IOException {
+        // 1. TSV 파서(구분자: 탭)를 생성합니다.
+        CSVParser tsvParser = new CSVParserBuilder()
+                .withSeparator('\t') // 핵심: 구분자를 쉼표(,) 대신 탭(\t)으로 변경
+                // .withQuoteChar('\"') // TSV도 CSV처럼 따옴표 문자를 사용할 수 있습니다. 기본값은 '\"'입니다.
+                .build();
 
-        // 2. [수정] FileInputStream을 BOMInputStream으로 감싸서 BOM을 자동으로 제거합니다.
-        try (BOMInputStream bomInputStream = new BOMInputStream(new FileInputStream(csvFile));
+        // 2. [유지] FileInputStream을 BOMInputStream으로 감싸서 BOM을 자동으로 제거합니다.
+        // (TSV 파일도 BOM이 있을 수 있습니다)
+        try (BOMInputStream bomInputStream = new BOMInputStream(new FileInputStream(tsvFile));
              InputStreamReader reader = new InputStreamReader(bomInputStream, StandardCharsets.UTF_8)) {
 
-            // 3. 위에서 만든 표준 파서를 사용하여 CSV 리더(Reader)를 생성합니다.
+            // 3. 위에서 만든 TSV 파서를 사용하여 CSV 리더(Reader)를 생성합니다.
+            // (클래스 이름이 CSVReader이지만, 지정된 파서를 따르므로 TSV 처리가 가능합니다)
             CSVReader csvReader = new CSVReaderBuilder(reader)
-                    .withCSVParser(rfc4180Parser)
+                    .withCSVParser(tsvParser) // 수정된 tsvParser를 주입
                     .build();
 
-            // 4. DTO의 헤더 이름과 CSV의 헤더를 매핑하는 전략을 설정합니다.
-            HeaderColumnNameMappingStrategy<GoodsBatchDto> strategy = new HeaderColumnNameMappingStrategy<>();
-            strategy.setType(GoodsBatchDto.class);
+            // 4. [유지] DTO의 헤더 이름과 TSV의 헤더를 매핑하는 전략을 설정합니다.
+            HeaderColumnNameMappingStrategy<T> strategy = new HeaderColumnNameMappingStrategy<>();
+            strategy.setType(dtoClass);
 
-            // 5. CsvToBeanBuilder에 직접 만든 CSV 리더와 매핑 전략을 제공하여 최종 변환합니다.
-            return new CsvToBeanBuilder<GoodsBatchDto>(csvReader)
+            // 5. [유지] CsvToBeanBuilder에 리더와 매핑 전략을 제공하여 최종 변환합니다.
+            return new CsvToBeanBuilder<T>(csvReader)
                     .withMappingStrategy(strategy)
                     .build()
                     .parse();
@@ -404,15 +474,15 @@ public class GoodsBatchService {
         }
     }
 
-    private File findCsvFile(Path dir) throws FileNotFoundException {
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.csv")) {
+    private File findTsvFile(Path dir) throws FileNotFoundException {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(dir, "*.tsv")) {
             for (Path path : stream) {
                 return path.toFile();
             }
         } catch (IOException e) {
-            throw new FileNotFoundException("CSV 파일을 찾는 중 오류가 발생했습니다.");
+            throw new FileNotFoundException("TSV 파일을 찾는 중 오류가 발생했습니다.");
         }
-        throw new FileNotFoundException("디렉토리에서 CSV 파일을 찾을 수 없습니다: " + dir);
+        throw new FileNotFoundException("디렉토리에서 TSV 파일을 찾을 수 없습니다: " + dir);
     }
     
     @Async
@@ -451,8 +521,8 @@ public class GoodsBatchService {
     	}
     }
 
-	public boolean gatherS3Data(String todayDate) {
-        log.info("1. S3 버킷 '{}'의 '{}' 폴더에서 객체 목록 조회를 시작합니다.", s3BucketName, s3FolderName);
+	public boolean gatherS3Data(String todayDate) throws Exception{
+        log.info("gatherS3Data 1. S3 버킷 '{}'의 '{}' 폴더에서 객체 목록 조회를 시작합니다.", s3BucketName, s3FolderName);
 
         // 객체 목록을 조회합니다.
         ListObjectsRequest listObjectsRequest = new ListObjectsRequest()
@@ -464,14 +534,14 @@ public class GoodsBatchService {
         log.info("   - {}개의 객체를 S3 버킷의 '{}' 폴더에서 발견했습니다.", s3Objects.size(), s3FolderName);
 
         if (s3Objects.isEmpty()) {
-            log.info("2. 처리할 파일이 S3 폴더에 없습니다. 스케줄러를 종료합니다.");
+            log.info("gatherS3Data 2. 처리할 파일이 S3 폴더에 없습니다. 스케줄러를 종료합니다.");
             return true;
         }
 
         int zipFileCount = 0;
         for (S3ObjectSummary s3Object : s3Objects) {
             String key = s3Object.getKey();
-            log.info("3. 객체 확인 중: '{}' (크기: {} bytes)", key, s3Object.getSize());
+            log.info("gatherS3Data 3. 객체 확인 중: '{}' (크기: {} bytes)", key, s3Object.getSize());
 
             if (key.equals(s3FolderName)) {
                 log.info("   - '{}'은(는) 폴더이므로 건너뜁니다.", key);
@@ -491,30 +561,58 @@ public class GoodsBatchService {
                 continue;
             }
             
-            zipFileCount++;
-            log.info("   - '{}'은(는) ZIP 파일입니다. 다운로드를 시작합니다.", key);
-            try {
-                GetObjectRequest getObjectRequest = new GetObjectRequest(s3BucketName, key);
-                com.amazonaws.services.s3.model.S3Object object = amazonS3.getObject(getObjectRequest);
-                byte[] data = IOUtils.toByteArray(object.getObjectContent());
-                log.info("   - '{}' 파일 다운로드 완료 ({} bytes).", key, data.length);
+            if(key.contains("harmfulword_")) {
+                zipFileCount++;
+                log.info("   - '{}'은(는) ZIP 파일입니다. 다운로드를 시작합니다.", key);
+                try {
+                    GetObjectRequest getObjectRequest = new GetObjectRequest(s3BucketName, key);
+                    com.amazonaws.services.s3.model.S3Object object = amazonS3.getObject(getObjectRequest);
+                    byte[] data = IOUtils.toByteArray(object.getObjectContent());
+                    log.info("   - '{}' 파일 다운로드 완료 ({} bytes).", key, data.length);
 
-                log.info("4. 다운로드한 파일을 MultipartFile 객체로 변환합니다.");
-                MultipartFile multipartFile = new UrlMultipartFile(data, key, "application/zip");
-                log.info("   - MultipartFile 객체 생성 완료: '{}'", multipartFile.getOriginalFilename());
+                    log.info("gatherS3Data 4. 다운로드한 파일을 MultipartFile 객체로 변환합니다.");
+                    MultipartFile multipartFile = new UrlMultipartFile(data, key, "application/zip");
+                    log.info("   - MultipartFile 객체 생성 완료: '{}'", multipartFile.getOriginalFilename());
 
-                log.info("5. GoodsBatchService의 processGoodsInspectionBatch 메서드를 호출하여 상품 검수 배치를 시작합니다.");
-                boolean batchResult = processGoodsInspectionBatch(multipartFile);
-                if(!batchResult) {
-                	return false;
+                    log.info("gatherS3Data 5. GoodsBatchService의 processHarmfulwordsBatch 메서드를 호출하여 금칙어 동기화 배치를 시작합니다.");
+                    boolean batchResult = processHarmfulwordsBatch(multipartFile);
+                    if(!batchResult) {
+                    	return false;
+                    }
+                    log.info("   - '{}' 파일에 대한 배치 처리 요청이 성공적으로 전달되었습니다.", key);
+
+                } catch (Exception e) {
+                    log.error("!! '{}' 파일 처리 중 오류가 발생했습니다. 다음 파일로 넘어갑니다.", key, e);
+                    throw e;
                 }
-                log.info("   - '{}' 파일에 대한 배치 처리 요청이 성공적으로 전달되었습니다.", key);
+            } else if(key.contains("goods_ai_inspection_")) {
+                zipFileCount++;
+                log.info("   - '{}'은(는) ZIP 파일입니다. 다운로드를 시작합니다.", key);
+                try {
+                    GetObjectRequest getObjectRequest = new GetObjectRequest(s3BucketName, key);
+                    com.amazonaws.services.s3.model.S3Object object = amazonS3.getObject(getObjectRequest);
+                    byte[] data = IOUtils.toByteArray(object.getObjectContent());
+                    log.info("   - '{}' 파일 다운로드 완료 ({} bytes).", key, data.length);
 
-            } catch (Exception e) {
-                log.error("!! '{}' 파일 처리 중 오류가 발생했습니다. 다음 파일로 넘어갑니다.", key, e);
+                    log.info("gatherS3Data 4. 다운로드한 파일을 MultipartFile 객체로 변환합니다.");
+                    MultipartFile multipartFile = new UrlMultipartFile(data, key, "application/zip");
+                    log.info("   - MultipartFile 객체 생성 완료: '{}'", multipartFile.getOriginalFilename());
+
+                    log.info("gatherS3Data 5. GoodsBatchService의 processGoodsInspectionBatch 메서드를 호출하여 상품 검수 배치를 시작합니다.");
+                    boolean batchResult = processGoodsInspectionBatch(multipartFile);
+                    if(!batchResult) {
+                    	return false;
+                    }
+                    log.info("   - '{}' 파일에 대한 배치 처리 요청이 성공적으로 전달되었습니다.", key);
+
+                } catch (Exception e) {
+                    log.error("!! '{}' 파일 처리 중 오류가 발생했습니다. 다음 파일로 넘어갑니다.", key, e);
+                    throw e;
+                }
             }
+
         }
-        log.info("6. 총 {}개의 ZIP 파일을 처리했습니다.", zipFileCount);
+        log.info("gatherS3Data 6. 총 {}개의 ZIP 파일을 처리했습니다.", zipFileCount);
         return true;
 	}
 	

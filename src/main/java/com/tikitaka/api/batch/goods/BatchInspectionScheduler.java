@@ -31,6 +31,7 @@ public class BatchInspectionScheduler {
         		goodsBatchService.recordBatchInStatus(gatherResult ? "SUCCESS" : "FAILED");
         	}
         } catch (Exception e) {
+    		goodsBatchService.recordBatchInStatus("FAILED");
             log.error("S3 데이터 수집 중 오류 발생", e);
         } finally {
             log.info("========== S3 데이터 수집 스케줄러 종료 ==========");
