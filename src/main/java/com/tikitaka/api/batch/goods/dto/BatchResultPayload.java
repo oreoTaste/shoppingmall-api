@@ -13,6 +13,7 @@ public class BatchResultPayload {
     private String status;
     private String inspectionStatus;
     private String errorMessage;
+    private String forbiddenWord;
 
     public static BatchResultPayload from(GoodsBatchRequest request) {
         return BatchResultPayload.builder()
@@ -21,6 +22,7 @@ public class BatchResultPayload {
                 .goodsCode(request.getGoodsCode())
                 .status(request.getStatus())
                 .inspectionStatus(request.getInspectionStatus())
+                .forbiddenWord(request.getForbiddenWord())
                 .errorMessage(request.getErrorMessage())
                 .build();
     }

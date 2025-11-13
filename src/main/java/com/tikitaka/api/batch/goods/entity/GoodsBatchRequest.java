@@ -33,6 +33,7 @@ public class GoodsBatchRequest {
     private String dgroupName;
     private String inspectionStatus;
     private String errorMessage;
+    private String forbiddenWord;
     private int retries;
     
     /**

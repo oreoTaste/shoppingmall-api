@@ -280,11 +280,13 @@ public class GoodsBatchService {
                 if (inspectionResult.isApproved()) {
                 	request.setStatus("COMPLETED");
                 	request.setInspectionStatus("COMPLETED");
+                	request.setForbiddenWord(inspectionResult.getForbiddenWord());
                 	request.setErrorMessage(null);
                 	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null, null);
                 } else {
                 	request.setStatus("COMPLETED");
                 	request.setInspectionStatus("FAILED");
+                	request.setForbiddenWord(inspectionResult.getForbiddenWord());
                 	request.setErrorMessage(inspectionResult.getReason());
                 	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "FAILED", inspectionResult.getForbiddenWord(), inspectionResult.getReason());
                 }
