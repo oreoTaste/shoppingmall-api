@@ -23,6 +23,7 @@ import com.tikitaka.api.batch.image.dto.UrlMultipartFile;
 import com.tikitaka.api.batch.inspection.InspectBatchService;
 import com.tikitaka.api.batch.inspection.dto.FileContent;
 import com.tikitaka.api.batch.inspection.dto.InspectionResult;
+import com.tikitaka.api.batch.inspection.dto.InspectionResultReq;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -666,4 +667,8 @@ public class GoodsBatchService {
 		return false;
 	}
 
+   	public List<GoodsBatchRequest> getGoodsBatchResult(InspectionResultReq inspectionResultReq) {
+		List<GoodsBatchRequest> statusResult = goodsBatchRequestRepository.selectGoodsBatchRequest(inspectionResultReq);
+		return statusResult;
+	}
 }

@@ -1,11 +1,18 @@
 package com.tikitaka.api.batch.goods;
 
+import java.util.List;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 //import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 //import org.springframework.web.multipart.MultipartFile;
+
+import com.tikitaka.api.batch.inspection.dto.InspectionResultReq;
+import com.tikitaka.api.global.dto.ApiResponseDto;
+import com.tikitaka.api.goods.dto.GoodsListDto;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,7 +24,7 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class GoodsBatchController {
 
-//	private final GoodsBatchService goodsBatchService;
+	private final GoodsBatchService goodsBatchService;
 	private final BatchInspectionScheduler batchInspectionScheduler;
 	
 //    /**
@@ -49,5 +56,11 @@ public class GoodsBatchController {
         return ResponseEntity.ok("배치 처리 요청이 성공적으로 접수되었습니다. 처리 완료 후 알림을 확인하세요.");
         
     }
-    
+
+    @GetMapping("/get-results")
+    public ResponseEntity<ApiResponseDto<?>> getResults(InspectionResultReq inspectionResultReq) {
+        return ResponseEntity.ok(ApiResponseDto.success("상품 목록을 성공적으로 조회했습니다.", goodsBatchService.getGoodsBatchResult(inspectionResultReq)));
+        
+    }
+
 }

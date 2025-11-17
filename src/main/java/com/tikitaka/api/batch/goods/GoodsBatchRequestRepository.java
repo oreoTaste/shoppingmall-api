@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.List;
 
 import com.tikitaka.api.batch.goods.entity.GoodsBatchRequest;
+import com.tikitaka.api.batch.inspection.dto.InspectionResultReq;
 
 public interface GoodsBatchRequestRepository {
     /**
@@ -67,4 +68,5 @@ public interface GoodsBatchRequestRepository {
 	 */
 	boolean mergeDailyStatus(String status);
 
+	List<GoodsBatchRequest> selectGoodsBatchRequest(InspectionResultReq inspectionResultReq);
 }

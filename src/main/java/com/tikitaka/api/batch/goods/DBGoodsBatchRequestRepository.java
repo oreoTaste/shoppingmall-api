@@ -7,8 +7,12 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
 import com.tikitaka.api.batch.goods.entity.GoodsBatchRequest;
+import com.tikitaka.api.batch.inspection.dto.InspectionResultReq;
+
+import ch.qos.logback.core.util.StringUtil;
 
 import java.sql.PreparedStatement;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
@@ -74,12 +78,15 @@ public class DBGoodsBatchRequestRepository implements GoodsBatchRequestRepositor
             .dgroup(rs.getString("dgroup"))
             .dgroupName(rs.getString("dgroup_name"))
             .retries(rs.getInt("retries"))
+            .inspectionStatus(rs.getString("inspection_status"))
+            .errorMessage(rs.getString("error_message"))
+            .forbiddenWord(rs.getString("forbidden_word"))
             .build();
 
 
     @Override
     public List<GoodsBatchRequest> findPendingRequests(int limit) {
-        String sql = "SELECT * FROM goods_batch_request WHERE status = 'PENDING' ORDER BY goods_code ASC LIMIT ?";
+        String sql = "SELECT /* DbGoodsBatchRequestRepository.findPendingRequests */ * FROM goods_batch_request WHERE status = 'PENDING' ORDER BY goods_code ASC LIMIT ?";
         return jdbcTemplate.query(sql, rowMapper, limit);
     }
 
@@ -100,7 +107,7 @@ public class DBGoodsBatchRequestRepository implements GoodsBatchRequestRepositor
 
     @Override
     public List<String> findOldBatchRecord(int day) {
-        String sql = "select distinct a.batch_job_id"
+        String sql = "select /* DbGoodsBatchRequestRepository.findOldBatchRecord */ distinct a.batch_job_id"
         			+"  from goods_batch_request a"
         			+" WHERE a.created_at <= NOW() - make_interval(days => ?)"
         			+"  and not exists (select 1"
@@ -132,7 +139,7 @@ public class DBGoodsBatchRequestRepository implements GoodsBatchRequestRepositor
     
     @Override
     public HashMap<String, Object> selectDailyStatus(String yyyymmdd) {
-        String sql = "SELECT status, cnt"
+        String sql = "SELECT /* DbGoodsBatchRequestRepository.selectDailyStatus */ status, cnt"
                    + "  FROM ("
                    + "		SELECT status, COUNT(1) over() AS CNT, row_number() over(order by created_at desc) AS rn"
                    + "		  FROM GOODS_BATCH_IN"
@@ -182,4 +189,41 @@ public class DBGoodsBatchRequestRepository implements GoodsBatchRequestRepositor
 	    return insertedRows > 0;
 	}
 
+	@Override
+	public List<GoodsBatchRequest> selectGoodsBatchRequest(InspectionResultReq inspectionResultReq) {
+        String sql = "SELECT /* DbGoodsBatchRequestRepository.selectGoodsBatchRequest */ * FROM goods_batch_request WHERE yyyymmdd = ? ";
+        List<String> params = new ArrayList<String>();
+        params.add(inspectionResultReq.getYyyymmdd());
+        
+        if(!StringUtil.isNullOrEmpty(inspectionResultReq.getStatus())) {
+        	sql += " and status = ?";
+            params.add(inspectionResultReq.getStatus());
+        }
+        
+        if(!StringUtil.isNullOrEmpty(inspectionResultReq.getInspectionStatus())) {
+        	sql += " and inspection_status = ?";
+            params.add(inspectionResultReq.getInspectionStatus());
+        }
+        if(!StringUtil.isNullOrEmpty(inspectionResultReq.getLgroup())) {
+        	sql += " and lgroup = ?";
+            params.add(inspectionResultReq.getLgroup());
+        }
+        if(!StringUtil.isNullOrEmpty(inspectionResultReq.getMgroup())) {
+        	sql += " and mgroup = ?";
+            params.add(inspectionResultReq.getMgroup());
+        }
+        if(!StringUtil.isNullOrEmpty(inspectionResultReq.getSgroup())) {
+        	sql += " and sgroup = ?";
+            params.add(inspectionResultReq.getSgroup());
+        }
+        if(!StringUtil.isNullOrEmpty(inspectionResultReq.getDgroup())) {
+        	sql += " and dgroup = ?";
+            params.add(inspectionResultReq.getDgroup());
+        }
+        
+        sql += " ORDER BY goods_code ASC";
+        return jdbcTemplate.query(sql, rowMapper, params.toArray());
+        
+
+	}
 }
