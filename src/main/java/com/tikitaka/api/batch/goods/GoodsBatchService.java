@@ -106,13 +106,13 @@ public class GoodsBatchService {
             // [핵심] 가장 안정적인 RFC4180Parser를 사용하는 파싱 메소드 호출
             List<HarmfulwordBatchDto> harmfulwordDtoList = GoodsBatchService.parseTsvToDto(tsvFile, HarmfulwordBatchDto.class);
             log.info("processHarmfulwordsBatch 4. TSV 파싱 완료. 총 {}개의 상품 데이터 발견.", harmfulwordDtoList.size());
-            log.info("샘플 데이터 : {}", harmfulwordDtoList.get(0).toString());
-
+            
             if (harmfulwordDtoList.isEmpty()) {
                 log.warn("경고: TSV 파일에서 상품 데이터를 읽어오지 못했습니다.");
                 return true;
             }
 
+            log.info("샘플 데이터 : {}", harmfulwordDtoList.get(0).toString());
             List<ForbiddenWord> forbiddenWords = harmfulwordDtoList.stream().map(HarmfulwordBatchDto::toForbiddenWord).toList();
             
             forbiddenWordBatchRepository.saveAll(forbiddenWords);
@@ -157,13 +157,13 @@ public class GoodsBatchService {
 
             List<GoodsBatchDto> goodsDtoList = GoodsBatchService.parseTsvToDto(tsvFile, GoodsBatchDto.class);
             log.info("processGoodsInspectionBatch 4. TSV 파싱 완료. 총 {}개의 상품 데이터 발견.", goodsDtoList.size());
-            log.info("샘플 데이터 : {}", goodsDtoList.get(0).toString());
 
             if (goodsDtoList.isEmpty()) {
                 log.warn("경고: TSV 파일에서 상품 데이터를 읽어오지 못했습니다.");
                 return true;
             }
 
+            log.info("샘플 데이터 : {}", goodsDtoList.get(0).toString());
             List<GoodsBatchRequest> requestEntities = new ArrayList<>();
             for (GoodsBatchDto dto : goodsDtoList) {
                 BigDecimal salePrice = BigDecimal.ZERO;
