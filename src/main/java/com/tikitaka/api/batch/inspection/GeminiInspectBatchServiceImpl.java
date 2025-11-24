@@ -75,7 +75,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
             for (MultipartFile file : files) {
                 if (file == null || file.isEmpty()) continue;
             	String fileName = String.format("--- 첨부 이미지 파일명: %s ---", file.getOriginalFilename());
-                log.info("파일명 : {}", fileName);
+                log.debug("파일명 : {}", fileName);
                 imageParts.add(new GeminiRequest.Part(fileName));
                 byte[] fileBytes = file.getBytes();
                 String base64EncodedImage = Base64.getEncoder().encodeToString(fileBytes);
@@ -86,14 +86,35 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
     }
 
     private List<GeminiRequest.Part> createPartsFromFileContents(List<FileContent> fileContents) {
-        List<GeminiRequest.Part> imageParts = new ArrayList<>();
+    	List<GeminiRequest.Part> imageParts = new ArrayList<>();
         if (fileContents != null) {
             for (FileContent file : fileContents) {
-            	String fileName = String.format("--- 첨부 이미지 파일명: %s ---", file.getOriginalFileName());
-                log.info("파일명 : {}", fileName);
-                imageParts.add(new GeminiRequest.Part(fileName));
+            	// 파일 내용이 없으면(0 byte) 건너뛰는 방어 로직
+                if (file.getContent() == null || file.getContent().length == 0) {
+                    log.warn("파일 크기가 0이므로 전송에서 제외합니다. 파일명: {}", file.getOriginalFileName());
+                    continue;
+                }
+                
+            	// 1. 파일명 정보를 텍스트 파트로 먼저 추가
+                //    Gemini에게 "이 이미지는 [파일명]입니다"라고 알려주는 역할을 합니다.
+                String fileName = String.format("--- 첨부 이미지 파일명: %s ---", file.getOriginalFileName());
+                log.debug("파일명 : {}", fileName);
+                imageParts.add(new GeminiRequest.Part(fileName)); 
+
+                // 2. [디버깅 로직] 실제 전송되는 MIME Type 로그 확인
+                log.debug("Gemini 전송 파일 정보 - 이름: {}, MIME: {}, 크기: {} bytes", 
+                         file.getOriginalFileName(), file.getMimeType(), file.getContent().length);
+
+                // 3. [방어 로직] MIME Type이 octet-stream이거나 null이면 강제 변환
+                String mimeType = file.getMimeType();
+                if (mimeType == null || "application/octet-stream".equals(mimeType)) {
+                     mimeType = "image/jpeg"; // Gemini가 인식 가능한 타입으로 강제 설정
+                     log.warn("파일({})의 MIME Type이 불명확({})하여 image/jpeg로 강제 변환합니다.", file.getOriginalFileName(), file.getMimeType());
+                }
+
+                // 4. 이미지 데이터 파트 추가
                 String base64EncodedImage = Base64.getEncoder().encodeToString(file.getContent());
-                imageParts.add(new GeminiRequest.Part(new GeminiRequest.InlineData(file.getMimeType(), base64EncodedImage)));
+                imageParts.add(new GeminiRequest.Part(new GeminiRequest.InlineData(mimeType, base64EncodedImage)));
             }
         }
         return imageParts;
@@ -130,6 +151,10 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
 
 
     private InspectionResult parseGeminiResponse(GeminiResponse response) {
+    	if (response != null && response.getCandidates() != null && !response.getCandidates().isEmpty()) {
+            log.info("Gemini 응답 상세 확인: {}", response); 
+        }
+    	
         // 1. Gemini API로부터 유효한 응답 후보가 있는지 확인
         if (response == null || response.getCandidates() == null || response.getCandidates().isEmpty()
                 || response.getCandidates().get(0).getContent() == null
@@ -240,7 +265,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
     	        goodsInfoLine,
     	        forbiddenWords
     	);
-    	log.info("생성된 프롬프트:\n{}", prompt);
+    	log.debug("생성된 프롬프트:\n{}", prompt);
     	return prompt;
     }
 

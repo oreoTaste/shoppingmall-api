@@ -7,11 +7,13 @@ import com.tikitaka.api.batch.image.dto.UrlMultipartFile;
 
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -36,10 +38,7 @@ public class ImageDownloadBatchServiceImpl implements ImageDownloadBatchService{
                 String originalFileName = extractFileNameFromUrl(imageUrl);
 
                 // MIME 타입 추측
-                String contentType = HttpURLConnection.guessContentTypeFromName(originalFileName);
-                if (contentType == null) {
-                    contentType = "application/octet-stream"; // 알 수 없는 경우 기본값 사용
-                }
+                String contentType = detectMimeType(imageBytes, originalFileName);
 
                 // UrlMultipartFile 객체 생성 및 리스트에 추가
                 MultipartFile multipartFile = new UrlMultipartFile(imageBytes, originalFileName, contentType);
@@ -93,8 +92,9 @@ public class ImageDownloadBatchServiceImpl implements ImageDownloadBatchService{
                 if (newUrl == null) {
                     throw new IOException("리다이렉션 URL을 찾을 수 없습니다.");
                 }
+                
+                log.info("리다이렉트 발생으로 신규 url로 시도: " + url + " -> " + newUrl);
                 url = new URL(newUrl);
-                System.out.println("리다이렉트 발생: " + newUrl);
                 connection.disconnect();
                 // 루프를 계속 진행하여 새 URL로 다시 시도
             } else {
@@ -123,5 +123,47 @@ public class ImageDownloadBatchServiceImpl implements ImageDownloadBatchService{
             return UUID.randomUUID().toString() + ".jpg";
         }
     }
+    
+    /**
+     * 파일명과 바이트 데이터를 사용하여 MIME 타입을 감지합니다.
+     */
+    private String detectMimeType(byte[] data, String fileName) {
+        String mimeType = null;
+
+        // 1. 파일 확장자 기반 추측 (가장 빠름)
+        mimeType = URLConnection.guessContentTypeFromName(fileName);
+
+        // 2. 데이터 시그니처(Magic Number) 기반 추측 (정확함)
+        if (mimeType == null && data.length > 0) {
+            try (ByteArrayInputStream bais = new ByteArrayInputStream(data)) {
+                mimeType = URLConnection.guessContentTypeFromStream(bais);
+            } catch (IOException e) {
+                // 무시
+            }
+        }
+
+        // 3. 그래도 없으면 확장자로 직접 매핑 (보완)
+        if (mimeType == null) {
+            String lowerCaseFileName = fileName.toLowerCase();
+            if (lowerCaseFileName.endsWith(".jpg") || lowerCaseFileName.endsWith(".jpeg")) {
+                mimeType = "image/jpeg";
+            } else if (lowerCaseFileName.endsWith(".png")) {
+                mimeType = "image/png";
+            } else if (lowerCaseFileName.endsWith(".gif")) {
+                mimeType = "image/gif";
+            } else if (lowerCaseFileName.endsWith(".webp")) {
+                mimeType = "image/webp";
+            } else if (lowerCaseFileName.endsWith(".bmp")) {
+                mimeType = "image/bmp";
+            }
+        }
+
+        // 4. 최후의 수단
+        if (mimeType == null) {
+            mimeType = "application/octet-stream";
+        }
+
+        return mimeType;
+    }    
     
 }

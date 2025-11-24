@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -42,9 +43,14 @@ public class BatchInspectionScheduler {
     // 1분마다 실행 (cron = "초 분 시 일 월 요일")
 	@Scheduled(cron = "0 */1 * * * *")
     public void triggerPendingBatchRequests() {
-		goodsBatchService.processPendingBatchRequests(100);
+		startProcessing(100);
     }
-    
+
+	@Async // 병렬 실행을 강제합니다.
+	public void startProcessing(int batchCount) {
+	    // 기존 로직을 여기에 넣습니다.
+		goodsBatchService.processPendingBatchRequests(batchCount);
+	}
     
 
     // 매일 0시0분 실행 (cron = "초 분 시 일 월 요일")

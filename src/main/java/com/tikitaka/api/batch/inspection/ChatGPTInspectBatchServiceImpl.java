@@ -294,7 +294,7 @@ public class ChatGPTInspectBatchServiceImpl extends AbstractInspectBatchService 
     	        goodsInfoLine,
     	        forbiddenWords
     	);
-    	log.info("생성된 프롬프트:\n{}", prompt);
+    	log.debug("생성된 프롬프트:\n{}", prompt);
     	return prompt;
     }
 

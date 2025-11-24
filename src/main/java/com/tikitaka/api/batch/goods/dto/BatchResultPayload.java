@@ -8,7 +8,6 @@ import lombok.Getter;
 @Builder
 public class BatchResultPayload {
     private Long requestId;
-    private String batchJobId;
     private String goodsCode;
     private String status;
     private String inspectionStatus;
@@ -18,7 +17,6 @@ public class BatchResultPayload {
     public static BatchResultPayload from(GoodsBatchRequest request) {
         return BatchResultPayload.builder()
                 .requestId(request.getRequestId())
-                .batchJobId(request.getBatchJobId())
                 .goodsCode(request.getGoodsCode())
                 .status(request.getStatus())
                 .inspectionStatus(request.getInspectionStatus())

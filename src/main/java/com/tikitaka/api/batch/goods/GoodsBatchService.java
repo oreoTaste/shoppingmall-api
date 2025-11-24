@@ -2,6 +2,7 @@ package com.tikitaka.api.batch.goods;
 
 import com.amazonaws.util.IOUtils;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.opencsv.CSVParser;
 import com.opencsv.CSVParserBuilder;
@@ -44,6 +45,7 @@ import org.springframework.util.FileSystemUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.io.*;
 import java.math.BigDecimal;
@@ -76,6 +78,9 @@ public class GoodsBatchService {
     @Value("${batch.result.callback-url}")
     private String callbackUrl;
 
+    @Value("${batch.max-tries}")
+    private int MAX_RETRIES;
+
     private final GoodsBatchRequestRepository goodsBatchRequestRepository;
     private final AmazonS3 amazonS3; // V1 SDK의 S3 Client
     private final InspectBatchService inspectService;
@@ -84,8 +89,8 @@ public class GoodsBatchService {
     private final WebClient.Builder webClientBuilder;
     private final ObjectMapper objectMapper;
     private final ForbiddenWordBatchRepository forbiddenWordBatchRepository;
-    private static final int MAX_RETRIES = 3; // 재시도 횟수 상수로 정의
 
+    
     @Async
     public boolean processHarmfulwordsBatch(MultipartFile zipFile) {
     	String originalFileName = Path.of(zipFile.getOriginalFilename()).getFileName().toString();
@@ -217,6 +222,7 @@ public class GoodsBatchService {
         }
     }
 
+    @Async
     public void processPendingBatchRequests(int batchCount) {
         String todayDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
     	String s3ReceivedResult = getBatchInStatus(todayDate);
@@ -229,9 +235,9 @@ public class GoodsBatchService {
     		batchCount = 100;
     	}
     	
-        log.info("===== 배치 검수 스케줄러 시작 =====");
-
-        // 1. 처리할 PENDING 상태의 요청을 10개 가져옵니다.
+    	log.info("===== 배치 검수 스케줄러 시작 (Thread: {}) =====", Thread.currentThread().getName());
+    	
+        // 1. 처리할 PENDING 상태의 요청을 {batchCount}개 가져옵니다.
         List<GoodsBatchRequest> pendingRequests = goodsBatchRequestRepository.findPendingRequests(batchCount);
         if (pendingRequests.isEmpty()) {
             log.info("처리할 배치 검수 요청이 없습니다.");
@@ -247,7 +253,7 @@ public class GoodsBatchService {
         // 3. 각 요청을 순회하며 AI 검수를 실행합니다.
         for (GoodsBatchRequest request : pendingRequests) {
             try {
-                log.info("--- request_id: {} 검수 처리 시작 ---", request.getRequestId());
+                log.debug("--- request_id: {} 검수 처리 시작 ---", request.getRequestId());
 
                 // 3-1. DB 데이터를 AI 검수 서비스가 이해할 수 있는 형태로 변환합니다.
                 Goods goods = request.toGoodsEntity();
@@ -275,7 +281,7 @@ public class GoodsBatchService {
                 
                 // 3-3. Gemini API 호출
                 InspectionResult inspectionResult = inspectService.performAiInspection(goods, filesToInspect, forbiddenWords);
-                log.info("Gemini API 호출 결과: 승인여부 = {}, 사유 = {}", inspectionResult.isApproved(), inspectionResult.getReason());
+                log.debug("Gemini API 호출 결과: 승인여부 = {}, 사유 = {}", inspectionResult.isApproved(), inspectionResult.getReason());
                 
                 // 3-4. 결과에 따라 DB 상태를 업데이트합니다.
                 if (inspectionResult.isApproved()) {
@@ -302,13 +308,43 @@ public class GoodsBatchService {
                     // 재시도 횟수를 1 증가시키고 상태를 다시 PENDING으로 업데이트합니다.
                     goodsBatchRequestRepository.incrementRetryCount(request.getRequestId(), e.getMessage());
                 } else {
-                    // 최대 재시도 횟수를 초과한 경우
-                    log.error("!! request_id: {} 처리 중 심각한 오류 발생 (재시도 횟수 초과: {}) !!", 
-                              request.getRequestId(), MAX_RETRIES, e.getMessage());
-                    // 최종적으로 FAILED 상태로 업데이트합니다.
-                    goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "FAILED", "FAILED", null, e.getMessage());
-                }                
-                
+                	// 2. 실패 확정 로직 (최대 횟수 초과)
+                	String finalErrorMessage = e.getMessage(); // 기본값: 예외 메시지
+
+                    // [개선 1] WebClient 에러인 경우 JSON 파싱 시도
+                    if (e instanceof WebClientResponseException wce) {
+                        String responseBody = wce.getResponseBodyAsString(StandardCharsets.UTF_8);
+                        try {
+                            // 예상 구조: { "error": { "message": "Provided image is not valid.", ... } }
+                            JsonNode rootNode = objectMapper.readTree(responseBody);
+                            
+                            if (rootNode.path("error").path("message").isTextual()) {
+                                finalErrorMessage = rootNode.path("error").path("message").asText();
+                            } else {
+                                finalErrorMessage = responseBody;
+                            }
+                        } catch (Exception jsonEx) {
+                            finalErrorMessage = responseBody;
+                        }
+                    }
+                    
+                    if (finalErrorMessage != null && finalErrorMessage.length() > 200) {
+                        finalErrorMessage = finalErrorMessage.substring(0, 195) + "...";
+                    }
+
+                    // 로그에는 원본 예외와 추출한 메시지를 모두 남김
+                    log.error("!! request_id: {} 최종 실패. ErrorMsg: {}", request.getRequestId(), finalErrorMessage);
+
+                    goodsBatchRequestRepository.updateFinalStatus(
+                        request.getRequestId(), 
+                        "FAILED", 
+                        "FAILED", 
+                        null, 
+                        finalErrorMessage
+                    );
+                    
+                    request.setErrorMessage(finalErrorMessage);
+                }
             } finally {
                 log.info("--- request_id: {} 검수 처리 종료 ---", request.getRequestId());
             }
@@ -389,13 +425,19 @@ public class GoodsBatchService {
             
             // 1-1. 이미지 다운로드 (s3서버에서 다운로드)
             List<String> imageUrlList = Arrays.stream(repPath.split(","))
-                    .map(path -> downloadUrl + path.trim()) // 각 경로 앞에 URL 붙이기 및 공백 제거
+                    .map(path -> downloadUrl + path.trim().replace(" ", "%20")) // 각 경로 앞에 URL 붙이기 및 공백 제거
                     .collect(Collectors.toList());
             
             MultipartFile[] downloadedFiles = imageDownloadService.downloadImagesAsMultipartFiles(imageUrlList);
             
             // 1-2. 분할된 이미지를 FileContent로 변환
             for (MultipartFile file : downloadedFiles) {
+            	// GIF 파일은 AI 검수에서 제외 (Unsupported MIME type 에러 방지)
+                if (file.getContentType() != null && file.getContentType().toLowerCase().contains("image/gif")) {
+                    log.warn("GIF 이미지는 AI 검수 대상에서 제외됩니다. 파일명: {}", file.getOriginalFilename());
+                    continue;
+                }
+                
                 fileContents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), file.getBytes()));
             }
         }
@@ -411,6 +453,12 @@ public class GoodsBatchService {
 
             // 2-2. 분할된 이미지를 FileContent로 변환
             for (MultipartFile file : splittedImages) {
+            	// GIF 파일은 AI 검수에서 제외 (Unsupported MIME type 에러 방지)
+                if (file.getContentType() != null && file.getContentType().toLowerCase().contains("image/gif")) {
+                    log.warn("GIF 이미지는 AI 검수 대상에서 제외됩니다. 파일명: {}", file.getOriginalFilename());
+                    continue;
+                }
+                
                 fileContents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), file.getBytes()));
             }
         }

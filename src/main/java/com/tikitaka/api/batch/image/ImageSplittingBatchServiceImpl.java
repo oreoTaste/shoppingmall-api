@@ -27,83 +27,92 @@ public class ImageSplittingBatchServiceImpl implements ImageSplittingBatchServic
      * @return 분할된 이미지들의 MultipartFile 리스트
      * @throws IOException 이미지 처리 중 발생할 수 있는 예외
      */
-    public MultipartFile[] splitImages(MultipartFile[] imageFiles, int targetHeight) throws IOException {
+	public MultipartFile[] splitImages(MultipartFile[] imageFiles, int targetHeight) throws IOException {
         List<MultipartFile> splitImageFiles = new ArrayList<>();
 
         if (imageFiles == null || imageFiles.length == 0) {
-            return new MultipartFile[0]; // 파일이 없으면 빈 배열 반환
+            return new MultipartFile[0];
         }
 
-        // 각 MultipartFile에 대해 처리
         for (MultipartFile file : imageFiles) {
-            if (file == null || file.isEmpty()) {
-                continue; // 빈 파일은 건너뜁니다.
-            }
+            if (file == null || file.isEmpty()) continue;
 
-            // --- [수정된 부분] ---
-            // 1. InputStream을 직접 사용하는 대신, 파일의 모든 내용을 byte 배열로 먼저 읽습니다.
-            //    이렇게 하면 데이터 스트림이 소모되는 문제를 근본적으로 방지할 수 있습니다.
             byte[] originalFileBytes = file.getBytes();
-
-            // 2. byte 배열로부터 BufferedImage를 생성합니다.
-            BufferedImage originalImage = ImageIO.read(new ByteArrayInputStream(originalFileBytes));
-
-            if (originalImage == null) {
-                // 혹은 지원하지 않는 파일 형식은 자르지 않고 바로 담기
-                splitImageFiles.add(file);
+            BufferedImage originalImage = null;
+            
+            try {
+                originalImage = ImageIO.read(new ByteArrayInputStream(originalFileBytes));
+            } catch (Exception e) {
+                log.warn("이미지 읽기 중 예외 발생 (건너뜀): {}", file.getOriginalFilename());
                 continue;
             }
-            // --- [수정 끝] ---
+
+            // 이미지를 읽지 못한 경우(null), 원본을 추가하지 않고 로그를 남긴 뒤 건너뜁니다.
+            if (originalImage == null) {
+                log.warn("이미지 디코딩 실패 - 지원하지 않는 형식이거나 손상된 파일입니다. (건너뜀): {}", file.getOriginalFilename());
+                continue;
+            }
 
             int originalWidth = originalImage.getWidth();
             int originalHeight = originalImage.getHeight();
+            String originalFileName = file.getOriginalFilename();
+            String baseName = getBaseName(originalFileName);
+            String extension = getFileExtension(originalFileName);
 
-            // 이미지가 자르기 기준 높이보다 작거나 같은 경우
+            // 확장자가 없거나 지원하지 않는 경우 'png'로 고정
+            if (extension == null || extension.isBlank() || !isSupportedImageFormat(extension)) {
+                extension = "png";
+            }
+            
+            String realMimeType = getMimeTypeFromExtension(extension);
+
+            // 1. 분할이 필요 없는 경우 (재인코딩하여 포맷 통일)
             if (originalHeight <= targetHeight) {
-                // --- [수정된 부분] ---
-                // 원본 파일을 그대로 추가하는 대신, 읽어둔 byte 배열로 새로운 MultipartFile 객체를 만들어 추가합니다.
-                // 이렇게 하면 반환되는 모든 파일 객체가 일관된 상태를 갖게 됩니다.
-                MultipartFile newUnsplittedFile = new InMemoryMultipartFile(file.getOriginalFilename(), file.getContentType(), originalFileBytes);
-                splitImageFiles.add(newUnsplittedFile);
-                // --- [수정 끝] ---
+                try {
+                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                    boolean result = ImageIO.write(originalImage, extension, baos);
+                    
+                    // ImageIO가 해당 확장자로 쓰기에 실패했을 경우 대비
+                    if (!result) {
+                        log.warn("이미지 인코딩 실패 (확장자: {}). PNG로 재시도합니다: {}", extension, originalFileName);
+                        baos.reset();
+                        ImageIO.write(originalImage, "png", baos);
+                        realMimeType = "image/png";
+                        extension = "png";
+                    }
+                    
+                    baos.flush();
+                    byte[] imageBytes = baos.toByteArray();
+                    baos.close();
+
+                    // 파일명이 .jpg인데 실제 데이터가 png가 되는 혼동을 막기 위해 파일명 확장자도 맞춤 (선택 사항)
+                    // String finalFileName = baseName + "." + extension; 
+                    MultipartFile processedFile = new InMemoryMultipartFile(originalFileName, realMimeType, imageBytes);
+                    splitImageFiles.add(processedFile);
+                } catch (IOException e) {
+                    log.error("이미지 재인코딩 중 오류 발생 (건너뜀): {}", originalFileName, e);
+                }
                 continue;
             }
 
+            // 2. 분할이 필요한 경우
             int numberOfParts = (int) Math.ceil((double) originalHeight / targetHeight);
-
             for (int i = 0; i < numberOfParts; i++) {
                 int y = i * targetHeight;
                 int h = Math.min(targetHeight, originalHeight - y);
 
-                // 이미지 자르기
                 BufferedImage subImage = originalImage.getSubimage(0, y, originalWidth, h);
-
-                // 원본 파일 정보 가져오기
-                String originalFileName = file.getOriginalFilename();
-                String baseName = getBaseName(originalFileName);
-                String extension = getFileExtension(originalFileName);
-
-                // 확장자가 없는 경우 기본값으로 'png' 설정 (이미지 포맷 보장)
-                if (extension == null || extension.isBlank() || !isSupportedImageFormat(extension)) {
-                    extension = "png";
-                }
-
-                // 잘라낸 BufferedImage를 byte[]로 변환
                 ByteArrayOutputStream baos = new ByteArrayOutputStream();
                 ImageIO.write(subImage, extension, baos);
                 baos.flush();
                 byte[] imageBytes = baos.toByteArray();
                 baos.close();
 
-                // 새 파일 이름 생성 (예: originalName_part001.png)
                 String newFileName = String.format("%s_part%03d.%s", baseName, (i + 1), extension);
-
-                // byte[]를 InMemoryMultipartFile 객체로 변환하여 리스트에 추가
-                MultipartFile newPartFile = new InMemoryMultipartFile(newFileName, file.getContentType(), imageBytes);
+                MultipartFile newPartFile = new InMemoryMultipartFile(newFileName, realMimeType, imageBytes);
                 splitImageFiles.add(newPartFile);
             }
         }
-
         return splitImageFiles.toArray(new MultipartFile[0]);
     }
 
@@ -193,4 +202,27 @@ public class ImageSplittingBatchServiceImpl implements ImageSplittingBatchServic
             new java.io.FileOutputStream(dest).write(this.content);
         }
     }
+    
+    // 확장자에 따른 올바른 MIME Type 반환 메서드
+    private String getMimeTypeFromExtension(String extension) {
+        if (extension == null) return "application/octet-stream";
+        String ext = extension.toLowerCase();
+        switch (ext) {
+            case "jpg":
+            case "jpeg":
+                return "image/jpeg";
+            case "png":
+                return "image/png";
+            case "gif":
+                return "image/gif";
+            case "bmp":
+                return "image/bmp";
+            case "webp":
+                return "image/webp";
+            default:
+                // Gemini는 image/* 타입을 원하므로 기본적으로 jpeg나 png로 유도하는 것이 안전함
+                return "image/jpeg"; 
+        }
+    }
+    
 }
