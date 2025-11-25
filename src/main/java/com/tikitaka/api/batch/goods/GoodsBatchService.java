@@ -251,6 +251,7 @@ public class GoodsBatchService {
         log.info("{}건의 요청을 PROCESSING 상태로 변경했습니다.", requestIds.size());
 
         // 3. 각 요청을 순회하며 AI 검수를 실행합니다.
+//        pendingRequests.parallelStream().forEach(request -> {
         for (GoodsBatchRequest request : pendingRequests) {
             try {
                 log.debug("--- request_id: {} 검수 처리 시작 ---", request.getRequestId());
@@ -277,6 +278,7 @@ public class GoodsBatchService {
                 	request.setErrorMessage(null);
                 	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null, "금칙어가 없습니다.");
                 	continue;
+//                	return;
                 }
                 
                 // 3-3. Gemini API 호출
@@ -349,6 +351,7 @@ public class GoodsBatchService {
                 log.info("--- request_id: {} 검수 처리 종료 ---", request.getRequestId());
             }
         }
+//        );
         
     	// 결과전송 메서드 호출
         sendBatchResult(pendingRequests);
