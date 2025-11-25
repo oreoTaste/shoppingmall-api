@@ -43,7 +43,7 @@ public class BatchInspectionScheduler {
     // 1분마다 실행 (cron = "초 분 시 일 월 요일")
 	@Scheduled(cron = "0 */1 * * * *")
     public void triggerPendingBatchRequests() {
-		startProcessing(100);
+		startProcessing(300);
     }
 
 	@Async // 병렬 실행을 강제합니다.

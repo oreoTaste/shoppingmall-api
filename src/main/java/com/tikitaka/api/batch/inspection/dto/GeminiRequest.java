@@ -1,8 +1,11 @@
 package com.tikitaka.api.batch.inspection.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.util.List;
 
@@ -11,6 +14,8 @@ import java.util.List;
 @AllArgsConstructor
 public class GeminiRequest {
     private List<Content> contents;
+    @JsonProperty("safetySettings")
+    private List<SafetySetting> safetySettings;
 
     @Data
     @AllArgsConstructor
@@ -38,5 +43,15 @@ public class GeminiRequest {
     public static class InlineData {
         private String mimeType;
         private String data; // Base64 encoded string
+    }
+    
+    @Data
+    @AllArgsConstructor
+    @NoArgsConstructor
+    public static class SafetySetting {
+    	@JsonProperty("category")
+        private String category;
+    	@JsonProperty("threshold")
+        private String threshold;
     }
 }

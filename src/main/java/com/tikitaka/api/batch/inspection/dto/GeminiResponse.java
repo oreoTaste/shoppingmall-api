@@ -9,11 +9,18 @@ import java.util.List;
 @NoArgsConstructor
 public class GeminiResponse {
     private List<Candidate> candidates;
+    private PromptFeedback promptFeedback; // [추가] 차단 사유 수신용
 
     @Data
     @NoArgsConstructor
     public static class Candidate {
         private Content content;
+    }
+    
+    @Data
+    @NoArgsConstructor
+    public static class PromptFeedback { // [추가]
+        private String blockReason;
     }
 
     @Data

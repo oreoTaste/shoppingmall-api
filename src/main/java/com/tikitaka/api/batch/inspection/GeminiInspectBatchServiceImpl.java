@@ -124,7 +124,20 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
         List<GeminiRequest.Part> parts = new ArrayList<>();
         parts.add(new GeminiRequest.Part(createPromptForCheckForbiddenWords(goods, forbiddenWords)));
         parts.addAll(imageParts);
-        return new GeminiRequest(List.of(new GeminiRequest.Content(parts)));
+        
+        List<GeminiRequest.Content> contents = List.of(new GeminiRequest.Content(parts));
+        
+        // [안전 설정 추가]
+        List<GeminiRequest.SafetySetting> safetySettings = new ArrayList<>();
+        // 선정성 필터 해제 (가장 중요)
+        safetySettings.add(new GeminiRequest.SafetySetting("HARM_CATEGORY_SEXUALLY_EXPLICIT", "BLOCK_NONE"));
+        // 기타 필터 해제
+        safetySettings.add(new GeminiRequest.SafetySetting("HARM_CATEGORY_HATE_SPEECH", "BLOCK_NONE"));
+        safetySettings.add(new GeminiRequest.SafetySetting("HARM_CATEGORY_HARASSMENT", "BLOCK_NONE"));
+        safetySettings.add(new GeminiRequest.SafetySetting("HARM_CATEGORY_DANGEROUS_CONTENT", "BLOCK_NONE"));
+
+        // 생성자를 통해 safetySettings 전달
+        return new GeminiRequest(contents, safetySettings);
     }
     
     private GeminiResponse callGeminiApi(GeminiRequest requestBody) {
@@ -134,18 +147,18 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
                 "apiKey", geminiApiKey
         );
         
-        try { // <-- [추가] try-catch 블록 시작
+        try {
             return webClient.post()
                     .uri(urlTemplate, uriVariables)
                     .bodyValue(requestBody)
                     .retrieve()
                     .bodyToMono(GeminiResponse.class)
                     .block();
-        } catch (WebClientResponseException e) { // <-- [추가] WebClientResponseException 처리
+        } catch (WebClientResponseException e) {
             log.error("Gemini API 호출 중 오류 발생 - Status: {}, Response Body: {}",
                     e.getStatusCode(),
-                    e.getResponseBodyAsString(StandardCharsets.UTF_8)); // 응답 본문을 UTF-8로 디코딩하여 로그에 기록
-            throw e; // 예외를 다시 던져서 상위 서비스에서 처리하도록 함
+                    e.getResponseBodyAsString(StandardCharsets.UTF_8));
+            throw e;
         }
     }
 
@@ -153,6 +166,14 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
     private InspectionResult parseGeminiResponse(GeminiResponse response) {
     	if (response != null && response.getCandidates() != null && !response.getCandidates().isEmpty()) {
             log.info("Gemini 응답 상세 확인: {}", response); 
+        }
+
+    	// 0. 안전 필터 등에 의해 차단되었는지 우선 확인
+        if (response != null && response.getPromptFeedback() != null && response.getPromptFeedback().getBlockReason() != null) {
+            String blockReason = response.getPromptFeedback().getBlockReason();
+            log.warn("Gemini가 안전 설정에 의해 응답을 차단했습니다. 사유: {}", blockReason);
+            // 차단된 경우 '실패' 또는 '반려'로 처리 (여기서는 에러 메시지와 함께 반려 처리 예시)
+            return InspectionResult.reject(null, "AI 안전 정책에 의해 차단되었습니다 (사유: " + blockReason + ")", geminiModelName);
         }
     	
         // 1. Gemini API로부터 유효한 응답 후보가 있는지 확인
@@ -195,8 +216,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
             }
 
         } else {
-            // "승인" 또는 "반려"로 시작하지 않는 모든 그 외의 경우
-            return InspectionResult.reject(null, "AI가 판독 불가 응답을 반환했습니다: " + textResponse, geminiModelName);
+            return InspectionResult.reject(null, "AI가 판독 불가 응답을 반환했습니다: ", geminiModelName);
         }
     }
 
