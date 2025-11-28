@@ -54,6 +54,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -79,6 +81,9 @@ public class GoodsBatchService {
     
     @Value("${batch.result.callback-url}")
     private String callbackUrl;
+    
+    @Value("${batch.result.monitoring-yn}")
+    private String monitoringYn = "Y";
     
     @Value("${batch.result.monitoring-url}")
     private String monitoringUrl;
@@ -433,10 +438,17 @@ public class GoodsBatchService {
             // [추가] 2. 모니터링 서버로 처리 건수 전송
             // -------------------------------------------------------
         	log.info("4. WebClient를 사용하여 모니터링 URL로 통계 전송 시작. URL: {}", monitoringUrl);
+        	
+        	if(!monitoringYn.equalsIgnoreCase("Y")) {
+                log.info("<<< 배치 결과 전송 메서드 sendBatchResult 종료 (모니터링 로그x)");
+        		return;
+        	}
             
             // 전송할 데이터 (예: "300" 문자열)
         	Map<String, Object> monitoringBody = new HashMap<>();
-        	monitoringBody.put("monitoringName", "ai");
+        	String today = LocalDateTime.now(ZoneId.of("Asia/Seoul")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        	
+        	monitoringBody.put("monitoringName", "ai 검수결과 (" + today + ")");
         	monitoringBody.put("count", payloadSize);
             
             WebClient webClient = webClientBuilder.build();
@@ -774,10 +786,15 @@ public class GoodsBatchService {
         log.debug(">>> 모니터링용 결과 전송 : sendMonitoringEventsAlive 시작");
         
         try {
+        	if(!monitoringYn.equalsIgnoreCase("Y")) {
+                log.debug("<<< 모니터링용 결과 전송 안함 : sendMonitoringEventsAlive 종료");
+        		return;
+        	}
+        	
         	log.debug("[sendMonitoringEventsAlive] WebClient를 사용하여 모니터링 URL로 통계 전송 시작. URL: {}", monitoringUrl);
             
         	Map<String, Object> monitoringBody = new HashMap<>();
-        	monitoringBody.put("monitoringName", "ai");
+        	monitoringBody.put("monitoringName", "ai 생존여부");
         	monitoringBody.put("count", 0);
             
             WebClient webClient = webClientBuilder.build();
