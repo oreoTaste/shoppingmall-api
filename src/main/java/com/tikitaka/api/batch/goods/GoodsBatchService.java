@@ -38,6 +38,7 @@ import com.amazonaws.services.s3.model.S3ObjectSummary;
 
 import org.apache.commons.io.input.BOMInputStream;
 import org.springframework.beans.factory.annotation.Value;
+import reactor.util.retry.Retry;
 import org.springframework.http.MediaType;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -51,6 +52,7 @@ import java.io.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -77,6 +79,9 @@ public class GoodsBatchService {
     
     @Value("${batch.result.callback-url}")
     private String callbackUrl;
+    
+    @Value("${batch.result.monitoring-url}")
+    private String monitoringUrl;
 
     @Value("${batch.max-tries}")
     private int MAX_RETRIES;
@@ -391,7 +396,10 @@ public class GoodsBatchService {
         }
 
         try {
-            log.info("3. WebClient를 사용하여 콜백 URL로 결과 전송 시작. URL: {}", callbackUrl);
+        	// -------------------------------------------------------
+            // [기존] 1. 메인 콜백 서버로 상세 결과 전송
+            // -------------------------------------------------------
+        	log.info("3. WebClient를 사용하여 콜백 URL로 결과 전송 시작. URL: {}", callbackUrl);
             WebClient webClient = webClientBuilder.build();
 
             webClient.post()
@@ -400,17 +408,56 @@ public class GoodsBatchService {
                      .body(Mono.just(jsonPayload), String.class)
                      .retrieve()
                      .bodyToMono(String.class)
+                     .timeout(Duration.ofSeconds(10))
+                     .retryWhen(Retry.fixedDelay(3, Duration.ofSeconds(1)))
                      .doOnSubscribe(subscription -> log.info("   - 콜백 API에 대한 비동기 요청 구독 시작..."))
                      .doOnSuccess(response ->
                         log.info("   - ✅ {}건의 배치 결과 전송 성공. 서버 응답: {}", completedRequests.size(), response))
-                     .doOnError(error ->
-                        log.error("   - ❌ !! 배치 결과 전송 실패 !! 원인: {}", error.getMessage(), error))
+                     .doOnError(error -> {
+                         String failedIds = completedRequests.stream()
+                                 .map(r -> String.valueOf(r.getRequestId()))
+                                 .collect(Collectors.joining(","));
+                         log.error("!! ❌ 배치 결과 전송 최종 실패 !! (대상 ID 목록: {}) 원인: {}", failedIds, error.getMessage());
+                      })
                      .doFinally(signalType ->
                         log.info("   - 비동기 요청 스트림 종료. Signal: {}", signalType))
                      .subscribe();
 
         } catch (Exception e) {
             log.error("!! WebClient 요청 설정 또는 실행 중 예외 발생 !!", e);
+        }
+
+        final int payloadSize = payloads.size();
+        try {
+            // -------------------------------------------------------
+            // [추가] 2. 모니터링 서버로 처리 건수 전송
+            // -------------------------------------------------------
+        	log.info("4. WebClient를 사용하여 모니터링 URL로 통계 전송 시작. URL: {}", monitoringUrl);
+            
+            // 전송할 데이터 (예: "300" 문자열)
+        	Map<String, Object> monitoringBody = new HashMap<>();
+        	monitoringBody.put("monitoringName", "ai");
+        	monitoringBody.put("count", payloadSize);
+            
+            WebClient webClient = webClientBuilder.build();
+            webClient.post()
+                     .uri(monitoringUrl)
+                     .contentType(MediaType.APPLICATION_JSON)
+                     .bodyValue(monitoringBody)
+                     .retrieve()
+                     .bodyToMono(String.class)
+                     .timeout(Duration.ofSeconds(10))
+                     .retryWhen(Retry.fixedDelay(3, Duration.ofSeconds(1)))
+                     .doOnSubscribe(s -> log.info("   - 모니터링 전송 시도..."))
+                     .doOnSuccess(res -> log.info("   - ✅ 모니터링 통계 전송 성공 ({}건).", payloadSize))
+                     .doOnError(error -> {
+                         // 모니터링 실패는 메인 로직만큼 치명적이지 않을 수 있으므로 로그만 남김
+                         log.warn("!! ❌ 모니터링 전송 실패 !! 원인: {}", error.getMessage());
+                      })
+                     .subscribe();
+
+        } catch (Exception e) {
+            log.error("!! 모니터링 WebClient 요청 설정 중 예외 발생 !!", e);
         }
 
         log.info("<<< 배치 결과 전송 메서드 sendBatchResult 종료");
@@ -722,4 +769,38 @@ public class GoodsBatchService {
 		List<GoodsBatchRequest> statusResult = goodsBatchRequestRepository.selectGoodsBatchRequest(inspectionResultReq);
 		return statusResult;
 	}
+
+	public void sendMonitoringEventsAlive() {
+        log.debug(">>> 모니터링용 결과 전송 : sendMonitoringEventsAlive 시작");
+        
+        try {
+        	log.debug("[sendMonitoringEventsAlive] WebClient를 사용하여 모니터링 URL로 통계 전송 시작. URL: {}", monitoringUrl);
+            
+        	Map<String, Object> monitoringBody = new HashMap<>();
+        	monitoringBody.put("monitoringName", "ai");
+        	monitoringBody.put("count", 0);
+            
+            WebClient webClient = webClientBuilder.build();
+            webClient.post()
+                     .uri(monitoringUrl)
+                     .contentType(MediaType.APPLICATION_JSON)
+                     .bodyValue(monitoringBody)
+                     .retrieve()
+                     .bodyToMono(String.class)
+                     .timeout(Duration.ofSeconds(10))
+                     .retryWhen(Retry.fixedDelay(3, Duration.ofSeconds(1)))
+                     .doOnSubscribe(s -> log.info("   - 모니터링 전송 시도..."))
+                     .doOnSuccess(res -> log.info("   - ✅ 모니터링 통계 전송 성공"))
+                     .doOnError(error -> {
+                         log.warn("[sendMonitoringEventsAlive] ❌ 모니터링 전송 실패 !! 원인: {}", error.getMessage());
+                      })
+                     .subscribe();
+
+        } catch (Exception e) {
+            log.error("[sendMonitoringEventsAlive] 모니터링 WebClient 요청 설정 중 예외 발생 !!", e);
+        }
+
+        log.debug("<<< 모니터링용 결과 전송 : sendMonitoringEventsAlive 종료");
+	}
+
 }

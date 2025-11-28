@@ -241,7 +241,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
     	        - **모바일용 상품명:** %s%s
 
     	        [이미지 정보]
-    	        - 함께 제공된 이미지에서 모든 텍스트를 인식하라.
+    	        - 함께 제공된 이미지에서 모든 텍스트를 인식하라.(단, 흐릿한 이미지는 제외해)
 
     	        ### 금칙어 목록
     	        - %s

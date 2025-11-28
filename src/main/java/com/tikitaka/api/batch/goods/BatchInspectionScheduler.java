@@ -58,5 +58,11 @@ public class BatchInspectionScheduler {
     public void removeOldRecord() {
     	goodsBatchService.removeOldRecord(3);
     }
-    
+
+    // 1분마다 실행 (cron = "초 분 시 일 월 요일")
+	@Scheduled(cron = "0 0 * * * *")
+    public void triggerMonitoringEventsAlive() {
+		goodsBatchService.sendMonitoringEventsAlive();
+    }
+
 }
