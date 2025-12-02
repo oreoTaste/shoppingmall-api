@@ -228,17 +228,18 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
     	    cleanedGoodsInfo = goodsInfo.replaceAll("(?s)<[^>]*>", "").trim();
     	}
 
-    	String goodsInfoLine = cleanedGoodsInfo.isEmpty() ? "" : String.format("\n- **기타 공시사항:** %s", cleanedGoodsInfo);
+    	String goodsInfoLine = cleanedGoodsInfo.isEmpty() ? "" : cleanedGoodsInfo;
 
     	String prompt = String.format(
     	        """
-				너는 쇼핑몰 상품의 텍스트와 이미지에서 금칙어와 그 변형을 탐지하는 AI 검수 시스템이다.
+				너는 쇼핑몰 상품의 텍스트와 이미지에서 금칙어와 그 변형을 탐지하는 상품QA 검수 시스템이다.
 				주어진 입력 정보를 바탕으로 아래 과업과 출력 규칙에 따라 최종 결과만 반환하라.
 				
 				### 입력 정보
 				[텍스트 정보]
 				- **등록 상품명:** %s
-				- **모바일용 상품명:** %s%s
+				- **모바일용 상품명:** %s
+				- **기타 공시사항:** %s
 				
 				[이미지 정보]
 				- 검수 대상 이미지에는 **상업용/전자상거래용 상품사진**이 제공된다.
@@ -283,7 +284,9 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
 				    - 금칙어 또는 [탐지 기준 A, B, C]에 해당하는 단어가 발견되면, **가장 먼저 발견된 하나**만 출력한다.
 				    - 형식: `반려:[원본 금칙어]:[사유]`
 				    - [사유]: `[발견 위치]에서 금칙어 '[원본 금칙어]'의 변형 표현('[발견된 표현]') 발견`
-				    - [발견 위치]: '등록 상품명', '모바일용 상품명', '기타 공시사항', '이미지' 중 택 1.
+				    - [발견 위치]: '등록 상품명', '모바일용 상품명', '기타 공시사항', '대표이미지', '상세이미지' 중 택 1.
+				        - **대표이미지 파일명:** `_h.jpg`, `_ah.jpg`, `_bh.jpg`, `_ch.jpg`, `_dh.jpg`, `_eh.jpg`로 끝나는 파일명의 이미지
+				        - **상세이미지 파일명:** 위 목록에 해당하지 않는 모든 이미지
 				
 				- **규칙 3:** 설명, 인사, 사과 등 불필요한 텍스트 금지.
 				
