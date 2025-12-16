@@ -7,11 +7,15 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
+import org.springframework.util.FileCopyUtils;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.core.io.Resource;
 
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -27,16 +31,26 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
     private final String geminiApiKey;
     private final String geminiApiUrl;
     private final String geminiModelName;
+    private final String promptTemplate;
+    
     public GeminiInspectBatchServiceImpl(WebClient.Builder webClientBuilder,
                                     @Value("${gemini.api.key}") String geminiApiKey,
                                     @Value("${gemini.api.url}") String geminiApiUrl,
-                                    @Value("${gemini.api.model_name}") String geminiModelName) {
+                                    @Value("${gemini.api.model_name}") String geminiModelName,
+                                    @Value("classpath:prompts/gemini-goods-inspection-prompt.txt") Resource promptResource) {
         // 부모 클래스에 공통 의존성 전달
         super(webClientBuilder);
         // 자신에게만 필요한 의존성 초기화
         this.geminiApiKey = geminiApiKey;
         this.geminiApiUrl = geminiApiUrl;
         this.geminiModelName = geminiModelName;	// gemini-2.0-flash
+        
+        try (Reader reader = new InputStreamReader(promptResource.getInputStream(), StandardCharsets.UTF_8)) {
+            this.promptTemplate = FileCopyUtils.copyToString(reader);
+            log.info("Gemini 프롬프트 템플릿 로드 성공 (길이: {})", this.promptTemplate.length());
+        } catch (IOException e) {
+            throw new RuntimeException("프롬프트 파일 로드 실패: prompts/gemini-goods-inspection-prompt.txt", e);
+        }
     }
 
     @Override
@@ -230,78 +244,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
 
     	String goodsInfoLine = cleanedGoodsInfo.isEmpty() ? "" : cleanedGoodsInfo;
 
-    	String prompt = String.format(
-    	        """
-				너는 쇼핑몰 상품의 텍스트와 이미지에서 금칙어와 그 변형을 탐지하는 상품QA 검수 시스템이다.
-				주어진 입력 정보를 바탕으로 아래 과업과 출력 규칙에 따라 최종 결과만 반환하라.
-				
-				### 입력 정보
-				[텍스트 정보]
-				- **등록 상품명:** %s
-				- **모바일용 상품명:** %s
-				- **기타 공시사항:** %s
-				
-				[이미지 정보]
-				- 검수 대상 이미지에는 **상업용/전자상거래용 상품사진**이 제공된다.
-				
-				### 금칙어 목록
-				- %s
-				
-				### 수행 과업
-				1.  **[이미지 전처리 & 텍스트 추출]**
-				    - 제공된 이미지 내에서 **시각적 요소(사람, 사물, 풍경 등)는 완전히 배제**하고, 오직 **텍스트(글자)**만을 추출하여 인식하라.
-				    - 그림(소방관, 경찰차, 무기 등)의 내용은 **절대 판단하지 말고**, 오직 이미지 내 **글자**만 추출한다.
-				    - 텍스트 식별이 불가능할 정도로 **흐릿하거나 해상도가 낮은 이미지**는 분석 대상에서 **제외(승인)**한다.
-				
-				2.  **[금칙어 및 변형 탐지 기준]**
-				    추출된 텍스트가 한글 또는 영문을 중심으로 아래 **세 가지 경우(A, B, C)** 중 하나라도 해당하면 즉시 '반려' 처리한다.
-				
-				    - **A. 직접 포함 (Substring Match):**
-				        - 텍스트 안에 금칙어가 **그대로 포함**되어 있는 경우.
-				        - 합성어 포함 (예: 금칙어 '군복' -> '구형군복', '군복바지' 등은 **반려**)
-				    - **B. 형태적 변형 (Visual Match):**
-				        - 자음/모음 분리, 특수문자 삽입 등 **글자 모양이 유사**한 경우.
-				        - (예: '병신' -> 'ㅂㅅ', '병!신')
-				    - **C. 발음적 변형 (Phonetic Match):**
-				        - 소리 내어 읽었을 때 발음이 매우 유사한 경우.
-				        - (예: '병신' -> '병쉰', '븅신')
-				
-				3.  **[탐지 제외 기준 - 환각(Hallucination) 방지]**
-				    위의 A, B, C에 해당하지 않는다면, 문맥상 의미가 통해도 **절대 잡지 않는다.**
-				    - **유의어 금지:** 글자와 발음이 다르면 뜻이 같아도 승인한다. (예: '군복' 금칙어 -> '밀리터리' 승인)
-				    - **이미지 억지 연결 금지:** 이미지에서 인식된 텍스트가 금칙어와 철자가 확연히 다르면 승인한다.
-				        - (실패 사례 방지: '경찰' <-> '망사하프덧신', '군복' <-> 'CAM', 'POLICE' <-> 'POF PORT' 등은 모두 **승인**)
-				
-				4.  검사 순서: 등록 상품명 -> 모바일용 상품명 -> 기타 공시사항 -> 이미지 내 텍스트
-				
-				### 출력 규칙
-				- **규칙 1 (승인):**
-				    - 금칙어(또는 명확한 변형)가 발견되지 않은 경우
-				    - 발견된 단어가 금칙어와 의미만 비슷하고 글자는 다른 경우(유의어)
-				    -> 위 경우에는 오직 **'승인'** 이라고만 응답한다.
-				
-				- **규칙 2 (반려):**
-				    - 금칙어 또는 [탐지 기준 A, B, C]에 해당하는 단어가 발견되면, **가장 먼저 발견된 하나**만 출력한다.
-				    - 형식: `반려:[원본 금칙어]:[사유]`
-				    - [사유]: `[발견 위치]에서 금칙어 '[원본 금칙어]'의 변형 표현('[발견된 표현]') 발견`
-				    - [발견 위치]: '등록 상품명', '모바일용 상품명', '기타 공시사항', '대표이미지', '상세이미지' 중 택 1.
-				        - **대표이미지 파일명:** `_h.jpg`, `_ah.jpg`, `_bh.jpg`, `_ch.jpg`, `_dh.jpg`, `_eh.jpg`로 끝나는 파일명의 이미지
-				        - **상세이미지 파일명:** 위 목록에 해당하지 않는 모든 이미지
-				
-				- **규칙 3:** 설명, 인사, 사과 등 불필요한 텍스트 금지.
-				
-				### 출력 예시
-				- **(상황: 텍스트에 '군용조끼'가 있고 금칙어가 '군용'인 경우 - A.직접 포함)**
-				반려:군용:등록 상품명에서 금칙어 '군용'의 변형 표현('군용조끼') 발견
-				- **(상황: 이미지에 '망사하프덧신'이 있고 금칙어가 '경찰'인 경우 - 환각 방지)**
-				승인
-				- **(상황: 상품명에 '밀리터리 룩'이 있고 금칙어가 '군복'인 경우 - 유의어 제외)**
-				승인
-				- **(상황: 이미지에 'Po!ice'가 있고 금칙어가 'POLICE'인 경우 - B.형태적 변형)**
-				반려:POLICE:이미지에서 금칙어 'POLICE'의 변형 표현('Po!ice') 발견
-				
-				이제 지시사항에 따라 검수를 시작하고 최종 결과만 출력하라.
-    	        """,
+    	String prompt = String.format(this.promptTemplate,
     	        // 검수 대상 정보
     	        goods.getGoodsName(),
     	        goods.getMobileGoodsName(),

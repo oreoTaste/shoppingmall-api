@@ -482,27 +482,27 @@ public class GoodsBatchService {
         List<FileContent> fileContents = new ArrayList<>();
 
         // 1. 대표 이미지 읽기
-        String repPath = request.getRepresentativeFile(); // https://img.shoppingntmall.com + /goods/783/23978783_h.jpg
-        if (repPath != null && !repPath.isEmpty()) {
-            
-            // 1-1. 이미지 다운로드 (s3서버에서 다운로드)
-            List<String> imageUrlList = Arrays.stream(repPath.split(","))
-                    .map(path -> downloadUrl + path.trim().replace(" ", "%20")) // 각 경로 앞에 URL 붙이기 및 공백 제거
-                    .collect(Collectors.toList());
-            
-            MultipartFile[] downloadedFiles = imageDownloadService.downloadImagesAsMultipartFiles(imageUrlList);
-            
-            // 1-2. 분할된 이미지를 FileContent로 변환
-            for (MultipartFile file : downloadedFiles) {
-            	// GIF 파일은 AI 검수에서 제외 (Unsupported MIME type 에러 방지)
-                if (file.getContentType() != null && file.getContentType().toLowerCase().contains("image/gif")) {
-                    log.warn("GIF 이미지는 AI 검수 대상에서 제외됩니다. 파일명: {}", file.getOriginalFilename());
-                    continue;
-                }
-                
-                fileContents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), file.getBytes()));
-            }
-        }
+//        String repPath = request.getRepresentativeFile(); // https://img.shoppingntmall.com + /goods/783/23978783_h.jpg
+//        if (repPath != null && !repPath.isEmpty()) {
+//            
+//            // 1-1. 이미지 다운로드 (s3서버에서 다운로드)
+//            List<String> imageUrlList = Arrays.stream(repPath.split(","))
+//                    .map(path -> downloadUrl + path.trim().replace(" ", "%20")) // 각 경로 앞에 URL 붙이기 및 공백 제거
+//                    .collect(Collectors.toList());
+//            
+//            MultipartFile[] downloadedFiles = imageDownloadService.downloadImagesAsMultipartFiles(imageUrlList);
+//            
+//            // 1-2. 분할된 이미지를 FileContent로 변환
+//            for (MultipartFile file : downloadedFiles) {
+//            	// GIF 파일은 AI 검수에서 제외 (Unsupported MIME type 에러 방지)
+//                if (file.getContentType() != null && file.getContentType().toLowerCase().contains("image/gif")) {
+//                    log.warn("GIF 이미지는 AI 검수 대상에서 제외됩니다. 파일명: {}", file.getOriginalFilename());
+//                    continue;
+//                }
+//                
+//                fileContents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), file.getBytes()));
+//            }
+//        }
         
         // 2. image_html의 URL들을 읽어 다운로드
         String imageUrls = request.getImageHtml();
