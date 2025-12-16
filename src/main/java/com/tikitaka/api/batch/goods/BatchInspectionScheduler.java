@@ -19,7 +19,7 @@ public class BatchInspectionScheduler {
     private final GoodsBatchService goodsBatchService;
     
     // 3시부터 배치서버 동작, 매일 3-5시 사이 15분마다 실행
-    @Scheduled(cron = "0 */15 3-5 * * *")
+    @Scheduled(cron = "0 */15 4-5 * * *")
     public void gatherS3Data() {
         log.info("========== S3 데이터 수집 스케줄러 시작 ==========");
         String todayDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));

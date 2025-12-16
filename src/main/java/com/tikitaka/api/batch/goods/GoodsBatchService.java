@@ -303,6 +303,17 @@ public class GoodsBatchService {
                 	request.setErrorMessage(null);
                 	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null, null);
                 } else {
+                	// 거절된 경우
+                	// ==================================================================================
+                    // 거절 1. 안전 설정에 의한 차단일 경우, 예외를 발생시켜 catch 블록의 재시도 로직을 수행하도록 처리
+                    // ==================================================================================
+                    if (inspectionResult.getReason() != null && inspectionResult.getReason().startsWith("AI 안전 정책에 의해 차단되었습니다")) {
+                        // 로그를 남기고 RuntimeException을 발생시켜 catch 블록으로 이동
+                        log.warn("request_id: {} - 안전 설정에 의해 차단됨. 재시도를 수행합니다. 사유: {}", request.getRequestId(), inspectionResult.getReason());
+                        throw new SafetyBlockException(inspectionResult);
+                    }
+                    // ==================================================================================                	
+                	
                 	request.setStatus("COMPLETED");
                 	request.setInspectionStatus("FAILED");
                 	request.setForbiddenWord(inspectionResult.getForbiddenWord());
@@ -311,51 +322,76 @@ public class GoodsBatchService {
                 }
 
             } catch (Exception e) {
-                int currentRetries = request.getRetries();
+                request.setStatus("COMPLETED");         // Job 상태 완료
+                request.setInspectionStatus("FAILED");  // 검수 결과 실패
+
+            	int currentRetries = request.getRetries();
                 
                 // 재시도 횟수가 최대 횟수 미만인 경우
                 if (currentRetries < MAX_RETRIES) {
-                    log.info("!! request_id: {} 처리 중 오류 발생. 재시도를 위해 상태를 PENDING으로 변경합니다. (시도: {}) !!", 
+                	log.info("!! request_id: {} 처리 중 오류 발생. 재시도를 위해 상태를 PENDING으로 변경합니다. (시도: {}) !!", 
                              request.getRequestId(), currentRetries + 1, e.getMessage());
                     // 재시도 횟수를 1 증가시키고 상태를 다시 PENDING으로 업데이트합니다.
                     goodsBatchRequestRepository.incrementRetryCount(request.getRequestId(), e.getMessage());
+                    request.setStatus("PENDING");         // Job 상태 처리중
                 } else {
-                	// 2. 실패 확정 로직 (최대 횟수 초과)
-                	String finalErrorMessage = e.getMessage(); // 기본값: 예외 메시지
+                	// (A) 안전 설정 차단으로 인한 실패인 경우 -> 검수 반려(COMPLETED/FAILED)로 처리
+                    if (e instanceof SafetyBlockException) {
+                        InspectionResult result = ((SafetyBlockException) e).getResult();
+                        log.warn("!! request_id: {} 안전 설정 차단 재시도 횟수 초과. 검수 반려 처리합니다.", request.getRequestId());
 
-                    // [개선 1] WebClient 에러인 경우 JSON 파싱 시도
-                    if (e instanceof WebClientResponseException wce) {
-                        String responseBody = wce.getResponseBodyAsString(StandardCharsets.UTF_8);
-                        try {
-                            // 예상 구조: { "error": { "message": "Provided image is not valid.", ... } }
-                            JsonNode rootNode = objectMapper.readTree(responseBody);
-                            
-                            if (rootNode.path("error").path("message").isTextual()) {
-                                finalErrorMessage = rootNode.path("error").path("message").asText();
-                            } else {
+                        goodsBatchRequestRepository.updateFinalStatus(
+                            request.getRequestId(), 
+                            "COMPLETED",         // status: 완료됨
+                            "FAILED",            // inspectionStatus: 검수 실패(반려)
+                            result.getForbiddenWord(), 
+                            result.getReason()   // 원래의 차단 사유 저장
+                        );
+                        
+                        // 메모리 객체 업데이트 (결과 전송을 위해 필수)
+                        request.setForbiddenWord(result.getForbiddenWord());
+                        request.setErrorMessage(result.getReason());
+                        
+                    } else {
+                    	// 2. 실패 확정 로직 (최대 횟수 초과)
+                    	String finalErrorMessage = e.getMessage(); // 기본값: 예외 메시지
+
+                        // [개선 1] WebClient 에러인 경우 JSON 파싱 시도
+                        if (e instanceof WebClientResponseException wce) {
+                            String responseBody = wce.getResponseBodyAsString(StandardCharsets.UTF_8);
+                            try {
+                                // 예상 구조: { "error": { "message": "Provided image is not valid.", ... } }
+                                JsonNode rootNode = objectMapper.readTree(responseBody);
+                                
+                                if (rootNode.path("error").path("message").isTextual()) {
+                                    finalErrorMessage = rootNode.path("error").path("message").asText();
+                                } else {
+                                    finalErrorMessage = responseBody;
+                                }
+                            } catch (Exception jsonEx) {
                                 finalErrorMessage = responseBody;
                             }
-                        } catch (Exception jsonEx) {
-                            finalErrorMessage = responseBody;
                         }
+                        
+                        if (finalErrorMessage != null && finalErrorMessage.length() > 200) {
+                            finalErrorMessage = finalErrorMessage.substring(0, 195) + "...";
+                        }
+
+                        // 로그에는 원본 예외와 추출한 메시지를 모두 남김
+                        log.error("!! request_id: {} 최종 실패. ErrorMsg: {}", request.getRequestId(), finalErrorMessage);
+
+                        goodsBatchRequestRepository.updateFinalStatus(
+                            request.getRequestId(), 
+                            "COMPLETED", 
+                            "FAILED", 
+                            null, 
+                            finalErrorMessage
+                        );
+
+                        // 메모리 객체 업데이트
+                        request.setErrorMessage(finalErrorMessage);
                     }
                     
-                    if (finalErrorMessage != null && finalErrorMessage.length() > 200) {
-                        finalErrorMessage = finalErrorMessage.substring(0, 195) + "...";
-                    }
-
-                    // 로그에는 원본 예외와 추출한 메시지를 모두 남김
-                    log.error("!! request_id: {} 최종 실패. ErrorMsg: {}", request.getRequestId(), finalErrorMessage);
-
-                    goodsBatchRequestRepository.updateFinalStatus(
-                        request.getRequestId(), 
-                        "FAILED", 
-                        "FAILED", 
-                        null, 
-                        finalErrorMessage
-                    );
-                    
-                    request.setErrorMessage(finalErrorMessage);
                 }
             } finally {
                 log.info("--- request_id: {} 검수 처리 종료 ---", request.getRequestId());
@@ -363,8 +399,12 @@ public class GoodsBatchService {
         }
 //        );
         
+        List<GoodsBatchRequest> completedRequests = pendingRequests.stream()
+        	    .filter(el -> "COMPLETED".equals(el.getStatus()) || "FAILED".equals(el.getStatus()))
+        	    .toList();
+        
     	// 결과전송 메서드 호출
-        sendBatchResult(pendingRequests);
+        sendBatchResult(completedRequests);
         
         log.info("===== 배치 검수 스케줄러 종료 =====");
     }
@@ -392,7 +432,7 @@ public class GoodsBatchService {
 
             log.info("2. DTO 리스트를 JSON 문자열로 직렬화 시작...");
             jsonPayload = objectMapper.writeValueAsString(payloads);
-            log.debug("   - 직렬화된 JSON 페이로드: {}", jsonPayload); // DEBUG 레벨로 페이로드 로깅
+            log.info("   - 직렬화된 JSON 페이로드: {}", jsonPayload); // INFO 레벨로 페이로드 로깅
             log.info("   - JSON 직렬화 완료.");
 
         } catch (JsonProcessingException e) {
@@ -818,6 +858,20 @@ public class GoodsBatchService {
         }
 
         log.debug("<<< 모니터링용 결과 전송 : sendMonitoringEventsAlive 종료");
+	}
+	
+	// GoodsBatchService 클래스 내부 하단에 추가
+	private static class SafetyBlockException extends RuntimeException {
+	    private final InspectionResult result;
+
+	    public SafetyBlockException(InspectionResult result) {
+	        super(result.getReason());
+	        this.result = result;
+	    }
+
+	    public InspectionResult getResult() {
+	        return result;
+	    }
 	}
 
 }
