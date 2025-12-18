@@ -674,7 +674,7 @@ public class GoodsBatchService {
     	}
     }
 
-	public boolean gatherS3Data(String todayDate) throws Exception{
+	public int gatherS3Data(String todayDate) throws Exception{
         log.info("gatherS3Data 1. S3 버킷 '{}'의 '{}' 폴더에서 객체 목록 조회를 시작합니다.", s3BucketName, s3FolderName);
 
         // 객체 목록을 조회합니다.
@@ -688,7 +688,7 @@ public class GoodsBatchService {
 
         if (s3Objects.isEmpty()) {
             log.info("gatherS3Data 2. 처리할 파일이 S3 폴더에 없습니다. 스케줄러를 종료합니다.");
-            return true;
+            return 0;
         }
 
         int zipFileCount = 0;
@@ -730,7 +730,7 @@ public class GoodsBatchService {
                     log.info("gatherS3Data 5. GoodsBatchService의 processHarmfulwordsBatch 메서드를 호출하여 금칙어 동기화 배치를 시작합니다.");
                     boolean batchResult = processHarmfulwordsBatch(multipartFile);
                     if(!batchResult) {
-                    	return false;
+                    	return 0;
                     }
                     log.info("   - '{}' 파일에 대한 배치 처리 요청이 성공적으로 전달되었습니다.", key);
 
@@ -754,7 +754,7 @@ public class GoodsBatchService {
                     log.info("gatherS3Data 5. GoodsBatchService의 processGoodsInspectionBatch 메서드를 호출하여 상품 검수 배치를 시작합니다.");
                     boolean batchResult = processGoodsInspectionBatch(multipartFile);
                     if(!batchResult) {
-                    	return false;
+                    	return 0;
                     }
                     log.info("   - '{}' 파일에 대한 배치 처리 요청이 성공적으로 전달되었습니다.", key);
 
@@ -766,7 +766,17 @@ public class GoodsBatchService {
 
         }
         log.info("gatherS3Data 6. 총 {}개의 ZIP 파일을 처리했습니다.", zipFileCount);
-        return true;
+        return zipFileCount;
+	}
+	
+	// 파일이 없을 경우 PENDING 상태를 다시 지워주기 위한 메서드
+	public void cancelBatchInStatus(String todayDate) {
+	    try {
+	        goodsBatchRequestRepository.deleteByBatchDate(todayDate); 
+	        log.info("파일이 존재하지 않아 배치 상태를 초기화했습니다. date: {}", todayDate);
+	    } catch (Exception e) {
+	        log.error("배치 상태 초기화 중 오류 발생: {}", e.getMessage());
+	    }
 	}
 	
 	/**

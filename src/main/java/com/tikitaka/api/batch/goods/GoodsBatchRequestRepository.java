@@ -53,7 +53,12 @@ public interface GoodsBatchRequestRepository {
      */
     void deleteOldBatchRecord(int day);
 
-
+    /**
+     * 해당 날짜의 배치 인입(s3) 상태 기록을 삭제합니다. (초기화용)
+     * @param yyyymmdd 삭제할 날짜 (yyyyMMdd)
+     */
+    void deleteByBatchDate(String yyyymmdd);
+    
     /**
      * 오늘 배치 인입상태를 체크합니다.
      * @param yyyymmdd 체크 대상 날짜

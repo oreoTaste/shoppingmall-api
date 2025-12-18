@@ -19,7 +19,7 @@ public class BatchInspectionScheduler {
     private final GoodsBatchService goodsBatchService;
     
     // 3시부터 배치서버 동작, 매일 3-5시 사이 15분마다 실행
-    @Scheduled(cron = "0 */15 4-5 * * *")
+    @Scheduled(cron = "0 */15 3-5 * * *")
     public void gatherS3Data() {
         log.info("========== S3 데이터 수집 스케줄러 시작 ==========");
         String todayDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
@@ -28,8 +28,18 @@ public class BatchInspectionScheduler {
         	String result = goodsBatchService.getBatchInStatus(todayDate);
         	if(result.equals("NONE")) {
         		goodsBatchService.recordBatchInStatus("PENDING");
-            	boolean gatherResult = goodsBatchService.gatherS3Data(todayDate);
-        		goodsBatchService.recordBatchInStatus(gatherResult ? "SUCCESS" : "FAILED");
+        		int processedCount = goodsBatchService.gatherS3Data(todayDate);
+        		
+        		if (processedCount > 0) {
+                    // 3-A. 처리된 파일이 있다면 SUCCESS로 확정
+                    goodsBatchService.recordBatchInStatus("SUCCESS");
+                    log.info("배치 처리 완료. 상태를 SUCCESS로 업데이트했습니다.");
+                } else {
+                    // 3-B. 처리된 파일이 없다면(아직 업로드가 안된 경우), PENDING 상태를 취소(삭제)
+                    //      그래야 다음 15분 뒤 스케줄러가 다시 'NONE' 상태를 보고 진입할 수 있음
+                    goodsBatchService.cancelBatchInStatus(todayDate);
+                    log.info("처리할 파일이 없어 배치 상태를 초기화(삭제)했습니다. 다음 스케줄에 재시도합니다.");
+                }
         	}
         } catch (Exception e) {
     		goodsBatchService.recordBatchInStatus("FAILED");

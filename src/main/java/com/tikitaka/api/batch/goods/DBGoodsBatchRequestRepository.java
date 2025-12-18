@@ -128,6 +128,14 @@ public class DBGoodsBatchRequestRepository implements GoodsBatchRequestRepositor
         jdbcTemplate.update(sql, day, day);
     }
 
+    @Override
+    public void deleteByBatchDate(String todayDate) {
+        String sql = "DELETE from goods_batch_in a "
+        			+ "WHERE a.status = 'PENDING'"
+        			+ "  and a.yyyymmdd = ?";
+        jdbcTemplate.update(sql, todayDate);
+    }
+    
     /**
      * 재시도 횟수를 1 증가시키고 상태를 다시 PENDING으로 변경하여 다음 스케줄에서 처리되도록 합니다.
      */
