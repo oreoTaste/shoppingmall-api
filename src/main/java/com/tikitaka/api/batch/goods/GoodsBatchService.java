@@ -58,6 +58,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -232,6 +235,142 @@ public class GoodsBatchService {
         }
     }
 
+    private void processSingleRequest(GoodsBatchRequest request) {
+        try {
+            log.debug("--- request_id: {} 검수 처리 시작 ---", request.getRequestId());
+
+            // 3-1. DB 데이터를 AI 검수 서비스가 이해할 수 있는 형태로 변환합니다.
+            Goods goods = request.toGoodsEntity();
+            List<FileContent> filesToInspect = readFilesFromPaths(request);
+
+            // 3-2. 금칙어 목록을 조회합니다.
+            ForbiddenWordSearchParam searchParam = new ForbiddenWordSearchParam();
+            searchParam.setLgroup(goods.getLgroup());
+            searchParam.setMgroup(goods.getMgroup());
+            searchParam.setSgroup(goods.getSgroup());
+            searchParam.setDgroup(goods.getDgroup());
+            List<ForbiddenWord> forbiddenWordsList = forbiddenWordBatchRepository.findActiveForbiddenWords(searchParam);
+            String forbiddenWords = forbiddenWordsList.stream()
+                    .map(ForbiddenWord::getWord)
+                    .collect(Collectors.joining(","));
+
+            if(forbiddenWords.length() <= 0) {
+            	// 3-3. 금칙어가 없는 경우 정상종료처리
+            	request.setStatus("COMPLETED");
+            	request.setInspectionStatus("COMPLETED");
+            	request.setErrorMessage(null);
+            	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null, "금칙어가 없습니다.");
+//            	continue;
+            	return;
+            }
+            
+            // 3-3. Gemini API 호출
+            InspectionResult inspectionResult = inspectService.performAiInspection(goods, filesToInspect, forbiddenWords);
+            log.debug("Gemini API 호출 결과: 승인여부 = {}, 사유 = {}", inspectionResult.isApproved(), inspectionResult.getReason());
+            
+            // 3-4. 결과에 따라 DB 상태를 업데이트합니다.
+            if (inspectionResult.isApproved()) {
+            	request.setStatus("COMPLETED");
+            	request.setInspectionStatus("COMPLETED");
+            	request.setForbiddenWord(inspectionResult.getForbiddenWord());
+            	request.setErrorMessage(null);
+            	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null, null);
+            } else {
+            	// 거절된 경우
+            	// ==================================================================================
+                // 거절 1. 안전 설정에 의한 차단일 경우, 예외를 발생시켜 catch 블록의 재시도 로직을 수행하도록 처리
+                // ==================================================================================
+                if (inspectionResult.getReason() != null && inspectionResult.getReason().startsWith("AI 안전 정책에 의해 차단되었습니다")) {
+                    // 로그를 남기고 RuntimeException을 발생시켜 catch 블록으로 이동
+                    log.warn("request_id: {} - 안전 설정에 의해 차단됨. 재시도를 수행합니다. 사유: {}", request.getRequestId(), inspectionResult.getReason());
+                    throw new SafetyBlockException(inspectionResult);
+                }
+                // ==================================================================================                	
+            	
+            	request.setStatus("COMPLETED");
+            	request.setInspectionStatus("FAILED");
+            	request.setForbiddenWord(inspectionResult.getForbiddenWord());
+            	request.setErrorMessage(inspectionResult.getReason());
+            	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "FAILED", inspectionResult.getForbiddenWord(), inspectionResult.getReason());
+            }
+
+        } catch (Exception e) {
+            request.setStatus("COMPLETED");         // Job 상태 완료
+            request.setInspectionStatus("FAILED");  // 검수 결과 실패
+
+        	int currentRetries = request.getRetries();
+            
+            // 재시도 횟수가 최대 횟수 미만인 경우
+            if (currentRetries < MAX_RETRIES) {
+            	log.info("!! request_id: {} 처리 중 오류 발생. 재시도를 위해 상태를 PENDING으로 변경합니다. (시도: {}) !!", 
+                         request.getRequestId(), currentRetries + 1, e.getMessage());
+                // 재시도 횟수를 1 증가시키고 상태를 다시 PENDING으로 업데이트합니다.
+                goodsBatchRequestRepository.incrementRetryCount(request.getRequestId(), e.getMessage());
+                request.setStatus("PENDING");         // Job 상태 처리중
+            } else {
+            	// (A) 안전 설정 차단으로 인한 실패인 경우 -> 검수 반려(COMPLETED/FAILED)로 처리
+                if (e instanceof SafetyBlockException) {
+                    InspectionResult result = ((SafetyBlockException) e).getResult();
+                    log.warn("!! request_id: {} 안전 설정 차단 재시도 횟수 초과. 검수 반려 처리합니다.", request.getRequestId());
+
+                    goodsBatchRequestRepository.updateFinalStatus(
+                        request.getRequestId(), 
+                        "COMPLETED",         // status: 완료됨
+                        "FAILED",            // inspectionStatus: 검수 실패(반려)
+                        result.getForbiddenWord(), 
+                        result.getReason()   // 원래의 차단 사유 저장
+                    );
+                    
+                    // 메모리 객체 업데이트 (결과 전송을 위해 필수)
+                    request.setForbiddenWord(result.getForbiddenWord());
+                    request.setErrorMessage(result.getReason());
+                    
+                } else {
+                	// 2. 실패 확정 로직 (최대 횟수 초과)
+                	String finalErrorMessage = e.getMessage(); // 기본값: 예외 메시지
+
+                    // [개선 1] WebClient 에러인 경우 JSON 파싱 시도
+                    if (e instanceof WebClientResponseException wce) {
+                        String responseBody = wce.getResponseBodyAsString(StandardCharsets.UTF_8);
+                        try {
+                            // 예상 구조: { "error": { "message": "Provided image is not valid.", ... } }
+                            JsonNode rootNode = objectMapper.readTree(responseBody);
+                            
+                            if (rootNode.path("error").path("message").isTextual()) {
+                                finalErrorMessage = rootNode.path("error").path("message").asText();
+                            } else {
+                                finalErrorMessage = responseBody;
+                            }
+                        } catch (Exception jsonEx) {
+                            finalErrorMessage = responseBody;
+                        }
+                    }
+                    
+                    if (finalErrorMessage != null && finalErrorMessage.length() > 200) {
+                        finalErrorMessage = finalErrorMessage.substring(0, 195) + "...";
+                    }
+
+                    // 로그에는 원본 예외와 추출한 메시지를 모두 남김
+                    log.error("!! request_id: {} 최종 실패. ErrorMsg: {}", request.getRequestId(), finalErrorMessage);
+
+                    goodsBatchRequestRepository.updateFinalStatus(
+                        request.getRequestId(), 
+                        "COMPLETED", 
+                        "FAILED", 
+                        null, 
+                        finalErrorMessage
+                    );
+
+                    // 메모리 객체 업데이트
+                    request.setErrorMessage(finalErrorMessage);
+                }
+                
+            }
+        } finally {
+            log.info("--- request_id: {} 검수 처리 종료 ---", request.getRequestId());
+        }
+    }
+    
     @Async
     public void processPendingBatchRequests(int batchCount) {
         String todayDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
@@ -260,144 +399,25 @@ public class GoodsBatchService {
         goodsBatchRequestRepository.updateStatusToProcessing(requestIds);
         log.info("{}건의 요청을 PROCESSING 상태로 변경했습니다.", requestIds.size());
 
-        // 3. 각 요청을 순회하며 AI 검수를 실행합니다.
-//        pendingRequests.parallelStream().forEach(request -> {
-        for (GoodsBatchRequest request : pendingRequests) {
-            try {
-                log.debug("--- request_id: {} 검수 처리 시작 ---", request.getRequestId());
+        // 3. 2개의 스레드만 사용하는 Executor 생성 (또는 Bean 주입)
+        ExecutorService executor = Executors.newFixedThreadPool(2);
 
-                // 3-1. DB 데이터를 AI 검수 서비스가 이해할 수 있는 형태로 변환합니다.
-                Goods goods = request.toGoodsEntity();
-                List<FileContent> filesToInspect = readFilesFromPaths(request);
+        try {
+            // 4. 각 요청을 CompletableFuture로 감싸서 병렬 실행
+            List<CompletableFuture<Void>> futures = pendingRequests.stream()
+                .map(request -> CompletableFuture.runAsync(() -> {
+                    // 기존 for문 내부의 로직을 수행할 별도 메서드 호출
+                    processSingleRequest(request);
+                }, executor))
+                .collect(Collectors.toList());
 
-                // 3-2. 금칙어 목록을 조회합니다.
-                ForbiddenWordSearchParam searchParam = new ForbiddenWordSearchParam();
-                searchParam.setLgroup(goods.getLgroup());
-                searchParam.setMgroup(goods.getMgroup());
-                searchParam.setSgroup(goods.getSgroup());
-                searchParam.setDgroup(goods.getDgroup());
-                List<ForbiddenWord> forbiddenWordsList = forbiddenWordBatchRepository.findActiveForbiddenWords(searchParam);
-                String forbiddenWords = forbiddenWordsList.stream()
-                        .map(ForbiddenWord::getWord)
-                        .collect(Collectors.joining(","));
-
-                if(forbiddenWords.length() <= 0) {
-                	// 3-3. 금칙어가 없는 경우 정상종료처리
-                	request.setStatus("COMPLETED");
-                	request.setInspectionStatus("COMPLETED");
-                	request.setErrorMessage(null);
-                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null, "금칙어가 없습니다.");
-                	continue;
-//                	return;
-                }
-                
-                // 3-3. Gemini API 호출
-                InspectionResult inspectionResult = inspectService.performAiInspection(goods, filesToInspect, forbiddenWords);
-                log.debug("Gemini API 호출 결과: 승인여부 = {}, 사유 = {}", inspectionResult.isApproved(), inspectionResult.getReason());
-                
-                // 3-4. 결과에 따라 DB 상태를 업데이트합니다.
-                if (inspectionResult.isApproved()) {
-                	request.setStatus("COMPLETED");
-                	request.setInspectionStatus("COMPLETED");
-                	request.setForbiddenWord(inspectionResult.getForbiddenWord());
-                	request.setErrorMessage(null);
-                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "COMPLETED", null, null);
-                } else {
-                	// 거절된 경우
-                	// ==================================================================================
-                    // 거절 1. 안전 설정에 의한 차단일 경우, 예외를 발생시켜 catch 블록의 재시도 로직을 수행하도록 처리
-                    // ==================================================================================
-                    if (inspectionResult.getReason() != null && inspectionResult.getReason().startsWith("AI 안전 정책에 의해 차단되었습니다")) {
-                        // 로그를 남기고 RuntimeException을 발생시켜 catch 블록으로 이동
-                        log.warn("request_id: {} - 안전 설정에 의해 차단됨. 재시도를 수행합니다. 사유: {}", request.getRequestId(), inspectionResult.getReason());
-                        throw new SafetyBlockException(inspectionResult);
-                    }
-                    // ==================================================================================                	
-                	
-                	request.setStatus("COMPLETED");
-                	request.setInspectionStatus("FAILED");
-                	request.setForbiddenWord(inspectionResult.getForbiddenWord());
-                	request.setErrorMessage(inspectionResult.getReason());
-                	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "FAILED", inspectionResult.getForbiddenWord(), inspectionResult.getReason());
-                }
-
-            } catch (Exception e) {
-                request.setStatus("COMPLETED");         // Job 상태 완료
-                request.setInspectionStatus("FAILED");  // 검수 결과 실패
-
-            	int currentRetries = request.getRetries();
-                
-                // 재시도 횟수가 최대 횟수 미만인 경우
-                if (currentRetries < MAX_RETRIES) {
-                	log.info("!! request_id: {} 처리 중 오류 발생. 재시도를 위해 상태를 PENDING으로 변경합니다. (시도: {}) !!", 
-                             request.getRequestId(), currentRetries + 1, e.getMessage());
-                    // 재시도 횟수를 1 증가시키고 상태를 다시 PENDING으로 업데이트합니다.
-                    goodsBatchRequestRepository.incrementRetryCount(request.getRequestId(), e.getMessage());
-                    request.setStatus("PENDING");         // Job 상태 처리중
-                } else {
-                	// (A) 안전 설정 차단으로 인한 실패인 경우 -> 검수 반려(COMPLETED/FAILED)로 처리
-                    if (e instanceof SafetyBlockException) {
-                        InspectionResult result = ((SafetyBlockException) e).getResult();
-                        log.warn("!! request_id: {} 안전 설정 차단 재시도 횟수 초과. 검수 반려 처리합니다.", request.getRequestId());
-
-                        goodsBatchRequestRepository.updateFinalStatus(
-                            request.getRequestId(), 
-                            "COMPLETED",         // status: 완료됨
-                            "FAILED",            // inspectionStatus: 검수 실패(반려)
-                            result.getForbiddenWord(), 
-                            result.getReason()   // 원래의 차단 사유 저장
-                        );
-                        
-                        // 메모리 객체 업데이트 (결과 전송을 위해 필수)
-                        request.setForbiddenWord(result.getForbiddenWord());
-                        request.setErrorMessage(result.getReason());
-                        
-                    } else {
-                    	// 2. 실패 확정 로직 (최대 횟수 초과)
-                    	String finalErrorMessage = e.getMessage(); // 기본값: 예외 메시지
-
-                        // [개선 1] WebClient 에러인 경우 JSON 파싱 시도
-                        if (e instanceof WebClientResponseException wce) {
-                            String responseBody = wce.getResponseBodyAsString(StandardCharsets.UTF_8);
-                            try {
-                                // 예상 구조: { "error": { "message": "Provided image is not valid.", ... } }
-                                JsonNode rootNode = objectMapper.readTree(responseBody);
-                                
-                                if (rootNode.path("error").path("message").isTextual()) {
-                                    finalErrorMessage = rootNode.path("error").path("message").asText();
-                                } else {
-                                    finalErrorMessage = responseBody;
-                                }
-                            } catch (Exception jsonEx) {
-                                finalErrorMessage = responseBody;
-                            }
-                        }
-                        
-                        if (finalErrorMessage != null && finalErrorMessage.length() > 200) {
-                            finalErrorMessage = finalErrorMessage.substring(0, 195) + "...";
-                        }
-
-                        // 로그에는 원본 예외와 추출한 메시지를 모두 남김
-                        log.error("!! request_id: {} 최종 실패. ErrorMsg: {}", request.getRequestId(), finalErrorMessage);
-
-                        goodsBatchRequestRepository.updateFinalStatus(
-                            request.getRequestId(), 
-                            "COMPLETED", 
-                            "FAILED", 
-                            null, 
-                            finalErrorMessage
-                        );
-
-                        // 메모리 객체 업데이트
-                        request.setErrorMessage(finalErrorMessage);
-                    }
-                    
-                }
-            } finally {
-                log.info("--- request_id: {} 검수 처리 종료 ---", request.getRequestId());
-            }
+            // 5. 모든 병렬 작업이 완료될 때까지 대기
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+            
+        } finally {
+            // 6. 사용이 끝난 executor는 반드시 종료해줘야 리소스가 반환됩니다.
+            executor.shutdown();
         }
-//        );
         
         List<GoodsBatchRequest> completedRequests = pendingRequests.stream()
         	    .filter(el -> "COMPLETED".equals(el.getStatus()) || "FAILED".equals(el.getStatus()))
