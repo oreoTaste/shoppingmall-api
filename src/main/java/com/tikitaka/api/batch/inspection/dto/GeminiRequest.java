@@ -12,10 +12,17 @@ import java.util.List;
 // --- Gemini API 요청 DTO ---
 @Data
 @AllArgsConstructor
+@NoArgsConstructor
 public class GeminiRequest {
+	
+	@JsonProperty("system_instruction") 
+    private Content systemInstruction;
+	
     private List<Content> contents;
+    
     @JsonProperty("safetySettings")
     private List<SafetySetting> safetySettings;
+
 
     @Data
     @AllArgsConstructor

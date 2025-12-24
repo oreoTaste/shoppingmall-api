@@ -37,7 +37,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
                                     @Value("${gemini.api.key}") String geminiApiKey,
                                     @Value("${gemini.api.url}") String geminiApiUrl,
                                     @Value("${gemini.api.model_name}") String geminiModelName,
-                                    @Value("classpath:prompts/gemini-goods-inspection-prompt.txt") Resource promptResource) {
+                                    @Value("classpath:prompts/gemini-inspection-system-prompt.txt") Resource promptResource) {
         // 부모 클래스에 공통 의존성 전달
         super(webClientBuilder);
         // 자신에게만 필요한 의존성 초기화
@@ -49,7 +49,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
             this.promptTemplate = FileCopyUtils.copyToString(reader);
             log.info("Gemini 프롬프트 템플릿 로드 성공 (길이: {})", this.promptTemplate.length());
         } catch (IOException e) {
-            throw new RuntimeException("프롬프트 파일 로드 실패: prompts/gemini-goods-inspection-prompt.txt", e);
+            throw new RuntimeException("프롬프트 파일 로드 실패: prompts/gemini-inspection-system-prompt.txt", e);
         }
     }
 
@@ -135,27 +135,57 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
     }
 
     private GeminiRequest createGeminiRequest(Goods goods, List<GeminiRequest.Part> imageParts, String forbiddenWords) {
-        List<GeminiRequest.Part> parts = new ArrayList<>();
-        parts.add(new GeminiRequest.Part(createPromptForCheckForbiddenWords(goods, forbiddenWords)));
-        parts.addAll(imageParts);
+        // 1. [시스템 명령 설정] AI의 역할과 규칙(프롬프트 템플릿)을 여기에 넣습니다.
+        // 기존에는 이게 contents에 섞여 들어갔지만, 이제는 "시스템 지시"로 따로 뺍니다.
+        GeminiRequest.Content systemInstruction = new GeminiRequest.Content(
+            List.of(new GeminiRequest.Part(this.promptTemplate)) 
+        );
+
+	     // 2. 사용자 메시지 (검사할 실제 데이터) 구성
+	     // 기존 프롬프트의 "입력 정보" 부분을 여기서 문자열로 만듭니다.
+	     String userMessageText = String.format("""
+	         ### 검수 대상 상품 정보
+	         [텍스트 정보]
+	         - 등록 상품명: %s
+	         - 모바일용 상품명: %s
+	         - 기타 공시사항: %s
+	
+	         [금칙어 목록]
+	         (아래 목록에 포함된 단어가 텍스트로 존재하는지 확인)
+	         %s
+	         
+	         위 정보를 바탕으로 '수행 과업'과 '출력 규칙'에 따라 검수 결과를 반환하라.
+	         """,
+	         goods.getGoodsName(),          // 첫 번째 %s
+	         goods.getMobileGoodsName(),    // 두 번째 %s
+	         goods.getGoodsInfo().replaceAll("(?s)<[^>]*>", "").trim(), // 세 번째 %s
+	         forbiddenWords                 // 네 번째 %s
+	     );
+	     
+	     // 3. 파트 구성 (텍스트 데이터 + 이미지)
+	     List<GeminiRequest.Part> userParts = new ArrayList<>();
+	     userParts.add(new GeminiRequest.Part(userMessageText)); // 텍스트 데이터 추가
+	     userParts.addAll(imageParts);
         
-        List<GeminiRequest.Content> contents = List.of(new GeminiRequest.Content(parts));
+        // 4. 요청 객체 생성 (systemInstruction과 contents 분리)
+        List<GeminiRequest.Content> contents = List.of(new GeminiRequest.Content(userParts));
         
-        // [안전 설정 추가]
+        // [안전 설정] (기존 코드 유지)
         List<GeminiRequest.SafetySetting> safetySettings = new ArrayList<>();
-        // 선정성 필터 해제 (가장 중요)
         safetySettings.add(new GeminiRequest.SafetySetting("HARM_CATEGORY_SEXUALLY_EXPLICIT", "BLOCK_NONE"));
-        // 기타 필터 해제
         safetySettings.add(new GeminiRequest.SafetySetting("HARM_CATEGORY_HATE_SPEECH", "BLOCK_NONE"));
         safetySettings.add(new GeminiRequest.SafetySetting("HARM_CATEGORY_HARASSMENT", "BLOCK_NONE"));
         safetySettings.add(new GeminiRequest.SafetySetting("HARM_CATEGORY_DANGEROUS_CONTENT", "BLOCK_NONE"));
 
-        // 생성자를 통해 safetySettings 전달
-        return new GeminiRequest(contents, safetySettings);
+        // 3. [최종 객체 생성] 시스템 명령 + 데이터 + 안전설정 모두 담아서 반환
+        // GeminiRequest의 @AllArgsConstructor 순서에 맞게 넣어주세요.
+        // 순서: systemInstruction, contents, safetySettings (DTO 필드 순서와 일치해야 함)
+        return new GeminiRequest(systemInstruction, contents, safetySettings);
     }
     
     private GeminiResponse callGeminiApi(GeminiRequest requestBody) {
-    	String urlTemplate = geminiApiUrl + "/v1/models/{modelName}:generateContent?key={apiKey}";
+    	String urlTemplate = geminiApiUrl + "/v1beta/models/{modelName}:generateContent?key={apiKey}";
+    	
         Map<String, String> uriVariables = Map.of(
                 "modelName", geminiModelName,
                 "apiKey", geminiApiKey
