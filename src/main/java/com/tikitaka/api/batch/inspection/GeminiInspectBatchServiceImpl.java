@@ -155,7 +155,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
     }
     
     private GeminiResponse callGeminiApi(GeminiRequest requestBody) {
-        String urlTemplate = geminiApiUrl + "/v1beta/models/{modelName}:generateContent?key={apiKey}";
+    	String urlTemplate = geminiApiUrl + "/v1/models/{modelName}:generateContent?key={apiKey}";
         Map<String, String> uriVariables = Map.of(
                 "modelName", geminiModelName,
                 "apiKey", geminiApiKey
