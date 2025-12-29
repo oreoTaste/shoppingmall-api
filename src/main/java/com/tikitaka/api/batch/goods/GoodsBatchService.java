@@ -48,6 +48,9 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import java.awt.color.ColorSpace;
+import java.awt.image.BufferedImage;
+import java.awt.image.ColorConvertOp;
 import java.io.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -64,6 +67,8 @@ import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
+
+import javax.imageio.ImageIO;
 
 @Slf4j
 @Service
@@ -560,7 +565,8 @@ public class GoodsBatchService {
 //                    continue;
 //                }
 //                
-//                fileContents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), file.getBytes()));
+//                byte[] grayscaleBytes = convertToGrayscale(file.getBytes(), file.getOriginalFilename());                
+//                fileContents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), grayscaleBytes));
 //            }
 //        }
         
@@ -580,14 +586,54 @@ public class GoodsBatchService {
                     log.warn("GIF 이미지는 AI 검수 대상에서 제외됩니다. 파일명: {}", file.getOriginalFilename());
                     continue;
                 }
-                
-                fileContents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), file.getBytes()));
+                // 이미지 데이터를 흑백(Grayscale)으로 변환
+                byte[] grayscaleBytes = convertToGrayscale(file.getBytes(), file.getOriginalFilename());                
+                fileContents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), grayscaleBytes));
             }
         }
 
         return fileContents;        
     }
 
+    /**
+     * 이미지 바이트 데이터를 흑백(Grayscale)으로 변환합니다.
+     */
+    private byte[] convertToGrayscale(byte[] imageBytes, String originalFileName) {
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(imageBytes);
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            
+            BufferedImage originalImage = ImageIO.read(bais);
+            if (originalImage == null) {
+                return imageBytes; // 이미지 읽기 실패 시 원본 반환
+            }
+
+            // 1. 흑백(Grayscale) BufferedImage 생성
+            BufferedImage grayscaleImage = new BufferedImage(
+                originalImage.getWidth(), 
+                originalImage.getHeight(), 
+                BufferedImage.TYPE_BYTE_GRAY
+            );
+            
+            // 2. 색상 변환 필터 적용
+            ColorConvertOp op = new ColorConvertOp(ColorSpace.getInstance(ColorSpace.CS_GRAY), null);
+            op.filter(originalImage, grayscaleImage);
+
+            // 3. 확장자 추출 (파일명에서 추출하거나 기본값으로 png 사용)
+            String format = "png";
+            if (originalFileName != null && originalFileName.contains(".")) {
+                format = originalFileName.substring(originalFileName.lastIndexOf(".") + 1).toLowerCase();
+            }
+            
+            // 4. 흑백 이미지를 다시 바이트 배열로 인코딩
+            ImageIO.write(grayscaleImage, format, baos);
+            return baos.toByteArray();
+            
+        } catch (IOException e) {
+            log.error("이미지 흑백 변환 중 오류 발생: {}", originalFileName, e);
+            return imageBytes; // 오류 시 원본 반환
+        }
+    }    
+    
     /**
      * Tsv파일을 DTO 리스트로 파싱하는 메서드
      *
