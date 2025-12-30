@@ -297,6 +297,9 @@ public class GoodsBatchService {
             	request.setForbiddenWord(inspectionResult.getForbiddenWord());
             	request.setErrorMessage(inspectionResult.getReason());
             	goodsBatchRequestRepository.updateFinalStatus(request.getRequestId(), "COMPLETED", "FAILED", inspectionResult.getForbiddenWord(), inspectionResult.getReason());
+            	
+            	log.info("request_id: {} - 검수 반려됨. 재시도를 수행합니다. 사유: {}", request.getRequestId(), inspectionResult.getReason());
+                throw new InspectionRejectedException(inspectionResult);
             }
 
         } catch (Exception e) {
@@ -313,8 +316,7 @@ public class GoodsBatchService {
                 goodsBatchRequestRepository.incrementRetryCount(request.getRequestId(), e.getMessage());
                 request.setStatus("PENDING");         // Job 상태 처리중
             } else {
-            	// (A) 안전 설정 차단으로 인한 실패인 경우 -> 검수 반려(COMPLETED/FAILED)로 처리
-                if (e instanceof SafetyBlockException) {
+                if (e instanceof SafetyBlockException) { // (A) 안전 설정 차단으로 인한 실패인 경우 -> 검수 반려(COMPLETED/FAILED)로 처리
                     InspectionResult result = ((SafetyBlockException) e).getResult();
                     log.warn("!! request_id: {} 안전 설정 차단 재시도 횟수 초과. 검수 반려 처리합니다.", request.getRequestId());
 
@@ -329,7 +331,15 @@ public class GoodsBatchService {
                     // 메모리 객체 업데이트 (결과 전송을 위해 필수)
                     request.setForbiddenWord(result.getForbiddenWord());
                     request.setErrorMessage(result.getReason());
-                    
+                } else if (e instanceof InspectionRejectedException) { // (B) [추가] 일반 반려로 인한 재시도 횟수 초과인 경우
+                    InspectionResult result = ((InspectionRejectedException) e).getResult();
+                    log.warn("!! request_id: {} 검수 반려 재시도 횟수 초과. 최종 반려 처리합니다.", request.getRequestId());
+
+                    goodsBatchRequestRepository.updateFinalStatus(
+                        request.getRequestId(), "COMPLETED", "FAILED", result.getForbiddenWord(), result.getReason()
+                    );
+                    request.setForbiddenWord(result.getForbiddenWord());
+                    request.setErrorMessage(result.getReason());
                 } else {
                 	// 2. 실패 확정 로직 (최대 횟수 초과)
                 	String finalErrorMessage = e.getMessage(); // 기본값: 예외 메시지
@@ -936,11 +946,23 @@ public class GoodsBatchService {
         log.debug("<<< 모니터링용 결과 전송 : sendMonitoringEventsAlive 종료");
 	}
 	
-	// GoodsBatchService 클래스 내부 하단에 추가
 	private static class SafetyBlockException extends RuntimeException {
 	    private final InspectionResult result;
 
 	    public SafetyBlockException(InspectionResult result) {
+	        super(result.getReason());
+	        this.result = result;
+	    }
+
+	    public InspectionResult getResult() {
+	        return result;
+	    }
+	}
+	
+	private static class InspectionRejectedException extends RuntimeException {
+	    private final InspectionResult result;
+
+	    public InspectionRejectedException(InspectionResult result) {
 	        super(result.getReason());
 	        this.result = result;
 	    }
