@@ -26,6 +26,7 @@ import com.tikitaka.api.batch.inspection.dto.FileContent;
 import com.tikitaka.api.batch.inspection.dto.InspectionResult;
 import com.tikitaka.api.batch.inspection.dto.InspectionResultReq;
 
+import ch.qos.logback.core.util.StringUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Mono;
@@ -48,9 +49,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
-import java.awt.color.ColorSpace;
 import java.awt.image.BufferedImage;
-import java.awt.image.ColorConvertOp;
 import java.io.*;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
@@ -98,6 +97,12 @@ public class GoodsBatchService {
 
     @Value("${batch.max-tries}")
     private int MAX_RETRIES;
+
+    @Value("${batch.multi-thread-count}")
+    private int MULTI_THREAD_COUNT;
+
+    @Value("${batch.result.sendYn}")
+    private String sendResultYn;
 
     private final GoodsBatchRequestRepository goodsBatchRequestRepository;
     private final AmazonS3 amazonS3; // V1 SDK의 S3 Client
@@ -366,8 +371,8 @@ public class GoodsBatchService {
                     }
 
                     // 로그에는 원본 예외와 추출한 메시지를 모두 남김
-                    log.error("!! request_id: {} 최종 실패. ErrorMsg: {}", request.getRequestId(), finalErrorMessage);
-
+                    log.error("!! request_id: {} 최종 실패. ErrorMsg: {}", request.getRequestId(), finalErrorMessage, e);
+                    
                     goodsBatchRequestRepository.updateFinalStatus(
                         request.getRequestId(), 
                         "COMPLETED", 
@@ -415,7 +420,7 @@ public class GoodsBatchService {
         log.info("{}건의 요청을 PROCESSING 상태로 변경했습니다.", requestIds.size());
 
         // 3. 2개의 스레드만 사용하는 Executor 생성 (또는 Bean 주입)
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newFixedThreadPool(MULTI_THREAD_COUNT);
 
         try {
             // 4. 각 요청을 CompletableFuture로 감싸서 병렬 실행
@@ -438,117 +443,123 @@ public class GoodsBatchService {
         	    .filter(el -> "COMPLETED".equals(el.getStatus()) || "FAILED".equals(el.getStatus()))
         	    .toList();
         
-    	// 결과전송 메서드 호출
-        sendBatchResult(completedRequests);
+        if("Y".equals(sendResultYn)) {
+        	// 결과전송 메서드 호출
+            sendBatchResult(completedRequests);
+        }
         
         log.info("===== 배치 검수 스케줄러 종료 =====");
     }
 
     /**
-     * 배치 처리 결과 리스트를 지정된 URL로 전송합니다.
-     * @param completedRequests 전송할 배치 요청 데이터 리스트
-     */
-    private void sendBatchResult(List<GoodsBatchRequest> completedRequests) {
-        log.info(">>> 배치 결과 전송 메서드 sendBatchResult 시작 (총 {}건)", completedRequests.size());
-        if (completedRequests == null || completedRequests.isEmpty()) {
-            log.warn("전송할 배치 결과 데이터가 없습니다. 메서드를 종료합니다.");
-            return;
-        }
+	 * 배치 처리 결과 리스트를 지정된 URL로 전송합니다.
+	 * @param completedRequests 전송할 배치 요청 데이터 리스트
+	 */
+	private void sendBatchResult(List<GoodsBatchRequest> completedRequests) {
+	    log.info(">>> 배치 결과 전송 메서드 sendBatchResult 시작 (총 {}건)", completedRequests.size());
+	    if (completedRequests == null || completedRequests.isEmpty()) {
+	        log.warn("전송할 배치 결과 데이터가 없습니다. 메서드를 종료합니다.");
+	        return;
+	    }
+	
+	    List<BatchResultPayload> payloads = null;
+	    String jsonPayload = null;
+	
+	    try {
+	        log.info("1. GoodsBatchRequest를 BatchResultPayload DTO로 변환 시작...");
+	        payloads = completedRequests.stream()
+	                .map(BatchResultPayload::from)
+	                .collect(Collectors.toList());
+	        log.info("   - DTO 변환 완료. 변환된 객체 수: {}", payloads.size());
+	
+	        log.info("2. DTO 리스트를 JSON 문자열로 직렬화 시작...");
+	        jsonPayload = objectMapper.writeValueAsString(payloads);
+	        log.info("   - 직렬화된 JSON 페이로드: {}", jsonPayload); // INFO 레벨로 페이로드 로깅
+	        log.info("   - JSON 직렬화 완료.");
+	
+	    } catch (JsonProcessingException e) {
+	        log.error("!! JSON 직렬화 중 심각한 오류 발생 !!", e);
+	        return; // 직렬화 실패 시, 더 이상 진행하지 않고 메서드 종료
+	    }
+	
+	    try {
+	    	// -------------------------------------------------------
+	        // [기존] 1. 메인 콜백 서버로 상세 결과 전송
+	        // -------------------------------------------------------
+	    	log.info("3. WebClient를 사용하여 콜백 URL로 결과 전송 시작. URL: {}", callbackUrl);
+	        WebClient webClient = webClientBuilder.build();
+	
+	        webClient.post()
+	                 .uri(callbackUrl)
+	                 .contentType(MediaType.APPLICATION_JSON)
+	                 .body(Mono.just(jsonPayload), String.class)
+	                 .retrieve()
+	                 .bodyToMono(String.class)
+	                 .timeout(Duration.ofSeconds(10))
+	                 .retryWhen(Retry.fixedDelay(3, Duration.ofSeconds(1)))
+	                 .doOnSubscribe(subscription -> log.info("   - 콜백 API에 대한 비동기 요청 구독 시작..."))
+	                 .doOnSuccess(response ->
+	                    log.info("   - ✅ {}건의 배치 결과 전송 성공. 서버 응답: {}", completedRequests.size(), response))
+	                 .doOnError(error -> {
+	                     String failedIds = completedRequests.stream()
+	                             .map(r -> String.valueOf(r.getRequestId()))
+	                             .collect(Collectors.joining(","));
+	                     log.error("!! ❌ 배치 결과 전송 최종 실패 !! (대상 ID 목록: {}) 원인: {}", failedIds, error.getMessage());
+	                  })
+	                 .doFinally(signalType ->
+	                    log.info("   - 비동기 요청 스트림 종료. Signal: {}", signalType))
+	                 .subscribe();
+	
+	    } catch (Exception e) {
+	        log.error("!! WebClient 요청 설정 또는 실행 중 예외 발생 !!", e);
+	    }
+	
+	    final int payloadSize = payloads.size();
+	    try {
+	        // -------------------------------------------------------
+	        // [추가] 2. 모니터링 서버로 처리 건수 전송
+	        // -------------------------------------------------------
+	    	if(StringUtil.isNullOrEmpty(monitoringUrl)) {
+	    		throw new NoSuchFieldException("모니터링 콜백 url 미지정 > url: " + monitoringUrl);
+	    	}
+	    	
+	    	log.info("4. WebClient를 사용하여 모니터링 URL로 통계 전송 시작. URL: {}", monitoringUrl);
 
-        List<BatchResultPayload> payloads = null;
-        String jsonPayload = null;
-
-        try {
-            log.info("1. GoodsBatchRequest를 BatchResultPayload DTO로 변환 시작...");
-            payloads = completedRequests.stream()
-                    .map(BatchResultPayload::from)
-                    .collect(Collectors.toList());
-            log.info("   - DTO 변환 완료. 변환된 객체 수: {}", payloads.size());
-
-            log.info("2. DTO 리스트를 JSON 문자열로 직렬화 시작...");
-            jsonPayload = objectMapper.writeValueAsString(payloads);
-            log.info("   - 직렬화된 JSON 페이로드: {}", jsonPayload); // INFO 레벨로 페이로드 로깅
-            log.info("   - JSON 직렬화 완료.");
-
-        } catch (JsonProcessingException e) {
-            log.error("!! JSON 직렬화 중 심각한 오류 발생 !!", e);
-            return; // 직렬화 실패 시, 더 이상 진행하지 않고 메서드 종료
-        }
-
-        try {
-        	// -------------------------------------------------------
-            // [기존] 1. 메인 콜백 서버로 상세 결과 전송
-            // -------------------------------------------------------
-        	log.info("3. WebClient를 사용하여 콜백 URL로 결과 전송 시작. URL: {}", callbackUrl);
-            WebClient webClient = webClientBuilder.build();
-
-            webClient.post()
-                     .uri(callbackUrl)
-                     .contentType(MediaType.APPLICATION_JSON)
-                     .body(Mono.just(jsonPayload), String.class)
-                     .retrieve()
-                     .bodyToMono(String.class)
-                     .timeout(Duration.ofSeconds(10))
-                     .retryWhen(Retry.fixedDelay(3, Duration.ofSeconds(1)))
-                     .doOnSubscribe(subscription -> log.info("   - 콜백 API에 대한 비동기 요청 구독 시작..."))
-                     .doOnSuccess(response ->
-                        log.info("   - ✅ {}건의 배치 결과 전송 성공. 서버 응답: {}", completedRequests.size(), response))
-                     .doOnError(error -> {
-                         String failedIds = completedRequests.stream()
-                                 .map(r -> String.valueOf(r.getRequestId()))
-                                 .collect(Collectors.joining(","));
-                         log.error("!! ❌ 배치 결과 전송 최종 실패 !! (대상 ID 목록: {}) 원인: {}", failedIds, error.getMessage());
-                      })
-                     .doFinally(signalType ->
-                        log.info("   - 비동기 요청 스트림 종료. Signal: {}", signalType))
-                     .subscribe();
-
-        } catch (Exception e) {
-            log.error("!! WebClient 요청 설정 또는 실행 중 예외 발생 !!", e);
-        }
-
-        final int payloadSize = payloads.size();
-        try {
-            // -------------------------------------------------------
-            // [추가] 2. 모니터링 서버로 처리 건수 전송
-            // -------------------------------------------------------
-        	log.info("4. WebClient를 사용하여 모니터링 URL로 통계 전송 시작. URL: {}", monitoringUrl);
-        	
-        	if(!monitoringYn.equalsIgnoreCase("Y")) {
-                log.info("<<< 배치 결과 전송 메서드 sendBatchResult 종료 (모니터링 로그x)");
-        		return;
-        	}
-            
-            // 전송할 데이터 (예: "300" 문자열)
-        	Map<String, Object> monitoringBody = new HashMap<>();
-        	String today = LocalDateTime.now(ZoneId.of("Asia/Seoul")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-        	
-        	monitoringBody.put("monitoringName", "ai 검수결과 (" + today + ")");
-        	monitoringBody.put("count", payloadSize);
-            
-            WebClient webClient = webClientBuilder.build();
-            webClient.post()
-                     .uri(monitoringUrl)
-                     .contentType(MediaType.APPLICATION_JSON)
-                     .bodyValue(monitoringBody)
-                     .retrieve()
-                     .bodyToMono(String.class)
-                     .timeout(Duration.ofSeconds(10))
-                     .retryWhen(Retry.fixedDelay(3, Duration.ofSeconds(1)))
-                     .doOnSubscribe(s -> log.info("   - 모니터링 전송 시도..."))
-                     .doOnSuccess(res -> log.info("   - ✅ 모니터링 통계 전송 성공 ({}건).", payloadSize))
-                     .doOnError(error -> {
-                         // 모니터링 실패는 메인 로직만큼 치명적이지 않을 수 있으므로 로그만 남김
-                         log.warn("!! ❌ 모니터링 전송 실패 !! 원인: {}", error.getMessage());
-                      })
-                     .subscribe();
-
-        } catch (Exception e) {
-            log.error("!! 모니터링 WebClient 요청 설정 중 예외 발생 !!", e);
-        }
-
-        log.info("<<< 배치 결과 전송 메서드 sendBatchResult 종료");
-    }
+	    	if(!monitoringYn.equalsIgnoreCase("Y")) {
+	            log.info("<<< 배치 결과 전송 메서드 sendBatchResult 종료 (모니터링 로그x)");
+	    		return;
+	    	}
+	        
+	        // 전송할 데이터 (예: "300" 문자열)
+	    	Map<String, Object> monitoringBody = new HashMap<>();
+	    	String today = LocalDateTime.now(ZoneId.of("Asia/Seoul")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+	    	
+	    	monitoringBody.put("monitoringName", "ai 검수결과 (" + today + ")");
+	    	monitoringBody.put("count", payloadSize);
+	        
+	        WebClient webClient = webClientBuilder.build();
+	        webClient.post()
+	                 .uri(monitoringUrl)
+	                 .contentType(MediaType.APPLICATION_JSON)
+	                 .bodyValue(monitoringBody)
+	                 .retrieve()
+	                 .bodyToMono(String.class)
+	                 .timeout(Duration.ofSeconds(10))
+	                 .retryWhen(Retry.fixedDelay(3, Duration.ofSeconds(1)))
+	                 .doOnSubscribe(s -> log.info("   - 모니터링 전송 시도..."))
+	                 .doOnSuccess(res -> log.info("   - ✅ 모니터링 통계 전송 성공 ({}건).", payloadSize))
+	                 .doOnError(error -> {
+	                     // 모니터링 실패는 메인 로직만큼 치명적이지 않을 수 있으므로 로그만 남김
+	                     log.warn("!! ❌ 모니터링 전송 실패 !! 원인: {}", error.getMessage());
+	                  })
+	                 .subscribe();
+	
+	    } catch (Exception e) {
+	        log.error("!! 모니터링 WebClient 요청 설정 중 예외 발생 !!", e);
+	    }
+	
+	    log.info("<<< 배치 결과 전송 메서드 sendBatchResult 종료");
+	}
     
     /**
      * GoodsBatchRequest에 저장된 파일 경로들로부터 실제 파일 내용을 읽어 FileContent 리스트를 생성합니다.
@@ -625,8 +636,13 @@ public class GoodsBatchService {
             );
             
             // 2. 색상 변환 필터 적용
-            ColorConvertOp op = new ColorConvertOp(ColorSpace.getInstance(ColorSpace.CS_GRAY), null);
-            op.filter(originalImage, grayscaleImage);
+//            ColorConvertOp op = new ColorConvertOp(ColorSpace.getInstance(ColorSpace.CS_GRAY), null);
+//            op.filter(originalImage, grayscaleImage);
+            
+            // Graphics2D를 사용하여 이미지를 그리면 복잡한 색상 프로필 변환 오류를 우회할 수 있습니다.
+            java.awt.Graphics2D g = grayscaleImage.createGraphics();
+            g.drawImage(originalImage, 0, 0, null);
+            g.dispose();
 
             // 3. 확장자 추출 (파일명에서 추출하거나 기본값으로 png 사용)
             String format = "png";
@@ -915,6 +931,10 @@ public class GoodsBatchService {
         	if(!monitoringYn.equalsIgnoreCase("Y")) {
                 log.debug("<<< 모니터링용 결과 전송 안함 : sendMonitoringEventsAlive 종료");
         		return;
+        	}
+        	
+        	if(StringUtil.isNullOrEmpty(monitoringUrl)) {
+        		throw new NoSuchFieldException("모니터링 콜백 url 미지정 > url: " + monitoringUrl);
         	}
         	
         	log.debug("[sendMonitoringEventsAlive] WebClient를 사용하여 모니터링 URL로 통계 전송 시작. URL: {}", monitoringUrl);

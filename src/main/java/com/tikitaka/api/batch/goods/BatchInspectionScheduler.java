@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,9 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class BatchInspectionScheduler {
+	
+    @Value("${batch.size-per-minute}")
+    private String batchSizePerMinute;
 
     private final GoodsBatchService goodsBatchService;
     
@@ -53,7 +57,14 @@ public class BatchInspectionScheduler {
     // 1분마다 실행 (cron = "초 분 시 일 월 요일")
 	@Scheduled(cron = "0 */1 * * * *")
     public void triggerPendingBatchRequests() {
-		startProcessing(300);
+		int batchSize = 300;
+		try {
+			batchSize = Integer.parseInt(batchSizePerMinute);
+		} catch(Exception e) {
+			log.warn("분당 AI API호출 건수가 설정되어 있지 않습니다.");
+		}
+		
+		startProcessing(batchSize);
     }
 
 	@Async // 병렬 실행을 강제합니다.

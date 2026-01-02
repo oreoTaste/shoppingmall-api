@@ -1,6 +1,7 @@
 package com.tikitaka.api.batch.image;
 
 import java.awt.image.BufferedImage;
+import java.awt.Graphics2D;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -52,7 +53,18 @@ public class ImageSplittingBatchServiceImpl implements ImageSplittingBatchServic
                 log.warn("이미지 디코딩 실패 - 지원하지 않는 형식이거나 손상된 파일입니다. (건너뜀): {}", file.getOriginalFilename());
                 continue;
             }
-
+            
+            try {
+                BufferedImage rgbImage = new BufferedImage(originalImage.getWidth(), originalImage.getHeight(), BufferedImage.TYPE_INT_RGB);
+                Graphics2D g = rgbImage.createGraphics();
+                g.drawImage(originalImage, 0, 0, null);
+                g.dispose();
+                originalImage = rgbImage; // 원본 이미지를 변환된 이미지로 교체
+            } catch (Exception e) {
+                log.warn("이미지 RGB 변환 실패 (건너뜀): {} - {}", file.getOriginalFilename(), e.getMessage());
+                continue;
+            }
+            
             int originalWidth = originalImage.getWidth();
             int originalHeight = originalImage.getHeight();
             String originalFileName = file.getOriginalFilename();
