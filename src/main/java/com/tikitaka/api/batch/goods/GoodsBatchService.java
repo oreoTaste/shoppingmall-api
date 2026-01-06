@@ -35,6 +35,7 @@ import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.model.GetObjectRequest;
 import com.amazonaws.services.s3.model.ListObjectsRequest;
 import com.amazonaws.services.s3.model.ObjectListing;
+import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
 
 import org.apache.commons.io.input.BOMInputStream;
@@ -52,6 +53,9 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import java.awt.image.BufferedImage;
 import java.io.*;
 import java.math.BigDecimal;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.time.Duration;
@@ -596,6 +600,18 @@ public class GoodsBatchService {
         if (imageUrls != null && !imageUrls.isEmpty()) {
             // 2-1. 다운로드된 이미지 분할
             List<String> imageUrlList = Arrays.asList(imageUrls.split(","));
+
+            // S3 객체 메타데이터 조회 및 생성 일시 로깅
+//            for (String urlStr : imageUrlList) {
+//                try {
+//                    // URL에서 S3 Key 추출 (URL이 http 경로라고 가정하고 path 부분만 추출)
+//                    checkHttpLastModified(urlStr.trim());
+//                } catch (Exception e) {
+//                    // 메타데이터 조회 실패 시 로그만 남기고 프로세스는 계속 진행
+//                    log.warn("S3 메타데이터(생성일시) 조회 실패 - URL: {}, 에러: {}", urlStr, e.getMessage());
+//                }
+//            }
+            
             MultipartFile[] downloadedFiles = imageDownloadService.downloadImagesAsMultipartFiles(imageUrlList);
             
             MultipartFile[] splittedImages = imageSplittingService.splitImages(downloadedFiles, 1600); // 1600px 높이로 분할
@@ -616,6 +632,40 @@ public class GoodsBatchService {
         return fileContents;        
     }
 
+    /**
+     * [추가 메서드] 일반 URL의 Last-Modified 헤더 조회
+     * HEAD 요청을 사용하여 파일 다운로드 없이 헤더만 빠르게 읽어옵니다.
+     */
+    private void checkHttpLastModified(String urlStr) {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(urlStr);
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("HEAD"); // Body 없이 Header만 요청
+            connection.setConnectTimeout(3000);  // 3초 타임아웃
+            connection.setReadTimeout(3000);
+            
+            // 연결 시도
+            int responseCode = connection.getResponseCode();
+            if (responseCode == 200) {
+                long lastModifiedLong = connection.getLastModified();
+                if (lastModifiedLong != 0) {
+                    Date date = new Date(lastModifiedLong);
+                    log.info(">>> [HTTP] External URL Info - URL: {}, Last-Modified: {}", urlStr, date);
+                } else {
+                    log.info(">>> [HTTP] External URL Info - URL: {}, Last-Modified 헤더 없음.", urlStr);
+                }
+            }
+        } catch (Exception e) {
+            // 외부 URL 연결 실패는 로그만 남기고 무시 (배치 중단 방지)
+            log.warn(">>> [HTTP] Date Check Failed - URL: {}, Error: {}", urlStr, e.getMessage());
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }    
+    
     /**
      * 이미지 바이트 데이터를 흑백(Grayscale)으로 변환합니다.
      */
