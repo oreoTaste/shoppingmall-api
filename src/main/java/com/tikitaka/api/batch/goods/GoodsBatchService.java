@@ -35,7 +35,6 @@ import com.amazonaws.services.s3.AmazonS3;
 import com.amazonaws.services.s3.model.GetObjectRequest;
 import com.amazonaws.services.s3.model.ListObjectsRequest;
 import com.amazonaws.services.s3.model.ObjectListing;
-import com.amazonaws.services.s3.model.ObjectMetadata;
 import com.amazonaws.services.s3.model.S3ObjectSummary;
 
 import org.apache.commons.io.input.BOMInputStream;
@@ -54,7 +53,6 @@ import java.awt.image.BufferedImage;
 import java.io.*;
 import java.math.BigDecimal;
 import java.net.HttpURLConnection;
-import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -77,7 +75,11 @@ import javax.imageio.ImageIO;
 @Service
 @RequiredArgsConstructor
 public class GoodsBatchService {
-
+	
+	static {
+        ImageIO.scanForPlugins();
+    }
+	
     @Value("${file.upload-dir}")
     private String uploadDir;
     
@@ -623,13 +625,48 @@ public class GoodsBatchService {
                     log.warn("GIF 이미지는 AI 검수 대상에서 제외됩니다. 파일명: {}", file.getOriginalFilename());
                     continue;
                 }
-                // 이미지 데이터를 흑백(Grayscale)으로 변환
-                byte[] grayscaleBytes = convertToGrayscale(file.getBytes(), file.getOriginalFilename());                
-                fileContents.add(new FileContent(file.getOriginalFilename(), file.getContentType(), grayscaleBytes));
+
+                byte[] originalBytes = file.getBytes();
+                String originalMimeType = file.getContentType();
+                String originalFileName = file.getOriginalFilename(); // 원본 파일명 보관
+                
+                // 1. 흑백 + WebP 변환 시도
+                byte[] processedBytes = convertToGrayscaleWebP(originalBytes, file.getOriginalFilename());
+
+                if (processedBytes != null) {
+                    // [수정] 변환 성공 시 파일명 확장자도 .webp로 변경
+                    String newFileName = renameToWebp(originalFileName);
+                    log.debug("파일명 변경: {} -> {}", originalFileName, newFileName);
+                    
+                    fileContents.add(new FileContent(newFileName, "image/webp", processedBytes));
+                } else {
+                    // 변환 실패: 원본 바이트와 원본 MIME 타입을 그대로 사용
+                    log.warn("이미지 변환 실패(또는 지원안됨)로 원본 형식을 유지합니다: {}, 타입: {}", 
+                             originalFileName, originalMimeType);
+                    fileContents.add(new FileContent(originalFileName, originalMimeType, originalBytes));
+                }
             }
         }
 
         return fileContents;        
+    }
+    
+    /**
+     * 파일명의 확장자를 .webp로 변경합니다.
+     */
+    private String renameToWebp(String fileName) {
+        if (fileName == null || fileName.isEmpty()) {
+            return "converted_image.webp";
+        }
+        
+        int lastDotIndex = fileName.lastIndexOf('.');
+        if (lastDotIndex == -1) {
+            // 확장자가 없는 파일명인 경우 뒤에 .webp를 붙임
+            return fileName + ".webp";
+        }
+        
+        // 확장자 앞부분(파일명) 추출 후 .webp 결합
+        return fileName.substring(0, lastDotIndex) + ".webp";
     }
 
     /**
@@ -667,48 +704,99 @@ public class GoodsBatchService {
     }    
     
     /**
-     * 이미지 바이트 데이터를 흑백(Grayscale)으로 변환합니다.
+     * 흑백 변환 후 WebP로 압축 시도. 전후 용량 로그를 출력합니다.
+     * @return 변환 성공 시 신규 바이트 배열, 실패 시 null
      */
-    private byte[] convertToGrayscale(byte[] imageBytes, String originalFileName) {
+    private byte[] convertToGrayscaleWebP(byte[] imageBytes, String originalFileName) {
+        
+    	long beforeSize = imageBytes.length; // 변환 전 용량
+        
         try (ByteArrayInputStream bais = new ByteArrayInputStream(imageBytes);
              ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
             
-            BufferedImage originalImage = ImageIO.read(bais);
-            if (originalImage == null) {
-                return imageBytes; // 이미지 읽기 실패 시 원본 반환
-            }
+        	BufferedImage originalImage = ImageIO.read(bais);
+            if (originalImage == null) return null;
 
-            // 1. 흑백(Grayscale) BufferedImage 생성
-            BufferedImage grayscaleImage = new BufferedImage(
+//            // debugging 시작
+//            // 1. [파일 저장] 변환 전 원본 파일 저장 (디버깅용)
+//            saveDebugImage(imageBytes, "before_" + originalFileName);
+//            // debugging 종료
+            
+            // 1. 최종적으로 WebP로 저장할 'RGB' 타입의 버퍼 생성 (중요!)
+            BufferedImage targetImage = new BufferedImage(
+                originalImage.getWidth(), 
+                originalImage.getHeight(), 
+                BufferedImage.TYPE_INT_RGB
+            );
+            
+            java.awt.Graphics2D g = targetImage.createGraphics();
+
+            // 2. 배경을 흰색으로 채움 (투명도 처리)
+            g.setColor(java.awt.Color.WHITE);
+            g.fillRect(0, 0, targetImage.getWidth(), targetImage.getHeight());
+
+            // 3. 흑백 변환을 위해 임시로 Grayscale 버퍼를 거쳐서 그리기
+            BufferedImage grayTemp = new BufferedImage(
                 originalImage.getWidth(), 
                 originalImage.getHeight(), 
                 BufferedImage.TYPE_BYTE_GRAY
             );
-            
-            // 2. 색상 변환 필터 적용
-//            ColorConvertOp op = new ColorConvertOp(ColorSpace.getInstance(ColorSpace.CS_GRAY), null);
-//            op.filter(originalImage, grayscaleImage);
-            
-            // Graphics2D를 사용하여 이미지를 그리면 복잡한 색상 프로필 변환 오류를 우회할 수 있습니다.
-            java.awt.Graphics2D g = grayscaleImage.createGraphics();
-            g.drawImage(originalImage, 0, 0, null);
+            java.awt.Graphics2D gGray = grayTemp.createGraphics();
+            gGray.drawImage(originalImage, 0, 0, null);
+            gGray.dispose();
+
+            // 4. 흑백으로 변환된 이미지를 다시 RGB 버퍼(targetImage)에 그리기
+            // 이렇게 하면 눈으로 보기엔 흑백이지만, 데이터 구조는 WebP Writer가 지원하는 RGB 형식이 됩니다.
+            g.drawImage(grayTemp, 0, 0, null);
             g.dispose();
 
-            // 3. 확장자 추출 (파일명에서 추출하거나 기본값으로 png 사용)
-            String format = "png";
-            if (originalFileName != null && originalFileName.contains(".")) {
-                format = originalFileName.substring(originalFileName.lastIndexOf(".") + 1).toLowerCase();
+            // 5. WebP 쓰기 시도 (라이브러리 로드 여부에 따라 결정됨)
+            if (!ImageIO.write(targetImage, "webp", baos)) {
+            	log.warn("WebP Writer를 찾을 수 없어 변환을 건너뜁니다. (라이브러리 의존성 확인 필요): {}", originalFileName);
+                return null;
             }
             
-            // 4. 흑백 이미지를 다시 바이트 배열로 인코딩
-            ImageIO.write(grayscaleImage, format, baos);
-            return baos.toByteArray();
+            byte[] result = baos.toByteArray();
             
-        } catch (IOException e) {
-            log.error("이미지 흑백 변환 중 오류 발생: {}", originalFileName, e);
-            return imageBytes; // 오류 시 원본 반환
+//            // debuging 시작
+//            // 4. [파일 저장] 변환 후 WebP 파일 저장 (디버깅용)
+//            String baseName = originalFileName.contains(".") 
+//                              ? originalFileName.substring(0, originalFileName.lastIndexOf(".")) 
+//                              : originalFileName;
+//            saveDebugImage(result, "after_" + baseName + ".webp");
+//
+//            log.debug("[이미지 변환 완료] {} -> {}.webp (용량: {}B -> {}B)", 
+//                     originalFileName, baseName, imageBytes.length, result.length);
+//            // debuging 종료
+            
+            long afterSize = result.length; // 변환 후 용량
+            
+            // 6. 용량 로그 출력 (절감률 포함)
+            double reduction = (1 - (double) afterSize / beforeSize) * 100;
+            log.debug("[이미지 변환] {} | 원본: {}B -> WebP(흑백): {}B (절감률: {}%)", 
+                     originalFileName, beforeSize, afterSize, String.format("%.2f", reduction));
+            
+            return result;
+            
+        } catch (Exception e) {
+            log.error("이미지 처리 중 예외 발생 (원본 유지): {}", originalFileName, e);
+            return null; // 예외 발생 시 null 반환하여 상위에서 원본 쓰도록 유도
         }
-    }    
+    }
+    
+    /**
+     * 서버 내 특정 디렉토리에 파일을 저장하는 헬퍼 메서드
+     */
+//    private void saveDebugImage(byte[] data, String fileName) {
+//        try {
+//            // application.properties에 설정된 uploadDir 내에 debug_images 폴더 생성
+//            Path path = Paths.get(uploadDir, "debug_images", fileName);
+//            Files.createDirectories(path.getParent());
+//            Files.write(path, data);
+//        } catch (IOException e) {
+//            log.error("디버그 이미지 저장 실패: {}", fileName, e);
+//        }
+//    }
     
     /**
      * Tsv파일을 DTO 리스트로 파싱하는 메서드

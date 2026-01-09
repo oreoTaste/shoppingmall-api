@@ -53,6 +53,9 @@ dependencies {
     // 이미지 처리를 위한 핵심 라이브러리
     implementation 'com.twelvemonkeys.imageio:imageio-jpeg:3.10.1' 
     implementation 'com.twelvemonkeys.imageio:imageio-core:3.10.1'
+
+	// WebP 쓰기(Write) 및 읽기 지원 라이브러리 추가
+    implementation 'com.github.gotson:webp-imageio:0.2.2'
 }
 
 tasks.named('test') {

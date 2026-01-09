@@ -149,7 +149,7 @@ public class GoodsServiceImpl implements GoodsService {
         if ("html".equals(request.getImageType())) {
             filesService.save(savedGoods, request.getImageHtml(), userDetails);
         } else {
-            MultipartFile[] splittedImages = imageSplittingService.splitImages(request.getFiles(), 1600);
+            MultipartFile[] splittedImages = imageSplittingService.splitImages(request.getFiles(), 1536); // 1536px 높이로 분할 (768px의 배수)
             filesService.save(savedGoods, splittedImages, userDetails);
         }
 
@@ -213,7 +213,7 @@ public class GoodsServiceImpl implements GoodsService {
                 MultipartFile[] downloadedImages = imageDownloadService.downloadImagesAsMultipartFiles(imageUrls);
                 inspectionFiles.addAll(convertMultipartToContent(downloadedImages));
             } else { // "file"
-                MultipartFile[] splittedImages = imageSplittingService.splitImages(imageFiles, 1600);
+                MultipartFile[] splittedImages = imageSplittingService.splitImages(imageFiles, 1536); // 1536px 높이로 분할 (768px의 배수)
                 inspectionFiles.addAll(convertMultipartToContent(splittedImages));
             }
         } else if (goodsId != null) {
@@ -341,7 +341,7 @@ public class GoodsServiceImpl implements GoodsService {
                 deleteImageFilesByGoodsId(goods.getGoodsId());
                 
                 // 파일의 세로길이가 너무 클 경우 자른다.
-                MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(detailFiles, 1600);
+                MultipartFile[] splittedImageFiles = this.imageSplittingService.splitImages(detailFiles, 1536); // 1536px 높이로 분할 (768px의 배수)
                 
                 // 새 상세 파일 저장
                 filesService.save(goods, splittedImageFiles, userDetails, false); // false는 상세 파일임을 나타내는 플래그
