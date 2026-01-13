@@ -193,7 +193,7 @@ public class ChatGPTInspectBatchServiceImpl extends AbstractInspectBatchService 
                 || response.getChoices().get(0).getMessage() == null
                 || response.getChoices().get(0).getMessage().getContent() == null) {
             
-            return InspectionResult.reject(null, "AI 검수 서버로부터 유효한 응답을 받지 못했습니다.", openaiApiModelName);
+            return InspectionResult.reject(100, null, "AI 검수 서버로부터 유효한 응답을 받지 못했습니다.", openaiApiModelName);
         }
         
         // 2. 응답 텍스트 추출
@@ -213,22 +213,22 @@ public class ChatGPTInspectBatchServiceImpl extends AbstractInspectBatchService 
                 try {
                 	String forbiddenWord = parts[1].trim();
                     String reason = parts[2].trim();
-                    return InspectionResult.reject(forbiddenWord, reason, openaiApiModelName);
+                    return InspectionResult.reject(200, forbiddenWord, reason, openaiApiModelName);
                 } catch (NumberFormatException e) {
                     // 실패코드가 숫자가 아닌 경우
                     log.error("ChatGPT 응답의 실패코드를 파싱할 수 없습니다: {}", parts[1]);
-                    return InspectionResult.reject(null, "AI 응답의 실패코드 형식이 올바르지 않습니다: " + textResponse, openaiApiModelName);
+                    return InspectionResult.reject(300, null, "AI 응답의 실패코드 형식이 올바르지 않습니다: " + textResponse, openaiApiModelName);
                 }
             } else {
                 // "반려"로 시작하지만 형식이 맞지 않는 경우
                 log.warn("ChatGPT 응답이 '반려'로 시작하지만 형식이 올바르지 않습니다: {}", textResponse);
                 String reason = textResponse.length() > 3 ? textResponse.substring(3).trim() : "AI가 등록을 거부했습니다.";
-                return InspectionResult.reject(null, reason, openaiApiModelName);
+                return InspectionResult.reject(400, null, reason, openaiApiModelName);
             }
 
         } else {
             // "승인" 또는 "반려"로 시작하지 않는 모든 그 외의 경우 (문자열 따옴표 오류 수정)
-            return InspectionResult.reject(null, "AI가 판독 불가 응답을 반환했습니다: " + textResponse, openaiApiModelName);
+            return InspectionResult.reject(500, null, "AI가 판독 불가 응답을 반환했습니다: " + textResponse, openaiApiModelName);
         }
     }
 

@@ -31,6 +31,7 @@ services:
       # 호스트의 ./uploads 폴더를 컨테이너의 /app/uploads 폴더와 연결(매핑)합니다.
       # 이 설정을 통해 컨테이너에 업로드된 파일이 호스트 컴퓨터에 영구적으로 저장됩니다.
       - ./uploads:/app/uploads
+	  - ./logs:/logs
         
 networks:
   shopping-network:

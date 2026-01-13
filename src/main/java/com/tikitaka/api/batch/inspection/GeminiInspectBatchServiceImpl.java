@@ -187,7 +187,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
             String blockReason = response.getPromptFeedback().getBlockReason();
             log.warn("Gemini가 안전 설정에 의해 응답을 차단했습니다. 사유: {}", blockReason);
             // 차단된 경우 '실패' 또는 '반려'로 처리 (여기서는 에러 메시지와 함께 반려 처리 예시)
-            return InspectionResult.reject(null, "AI 안전 정책에 의해 차단되었습니다 (사유: " + blockReason + ")", geminiModelName);
+            return InspectionResult.reject(100, null, "AI 안전 정책에 의해 차단되었습니다 (사유: " + blockReason + ")", geminiModelName);
         }
     	
         // 1. Gemini API로부터 유효한 응답 후보가 있는지 확인
@@ -196,7 +196,7 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
                 || response.getCandidates().get(0).getContent().getParts() == null
                 || response.getCandidates().get(0).getContent().getParts().isEmpty()) {
             
-            return InspectionResult.reject(null, "AI 검수 서버로부터 유효한 응답을 받지 못했습니다.", geminiModelName);
+            return InspectionResult.reject(200, null, "AI 검수 서버로부터 유효한 응답을 받지 못했습니다.", geminiModelName);
         }
         
         // 2. 응답 텍스트 추출
@@ -216,21 +216,21 @@ public class GeminiInspectBatchServiceImpl extends AbstractInspectBatchService {
                 try {
                     String forbiddenWord = parts[1].trim();
                     String reason = parts[2].trim();
-                    return InspectionResult.reject(forbiddenWord, reason, geminiModelName);
+                    return InspectionResult.reject(300, forbiddenWord, reason, geminiModelName);
                 } catch (NumberFormatException e) {
                     // 실패코드가 숫자가 아닌 경우
                     log.error("AI 응답의 실패코드를 파싱할 수 없습니다: {}", parts[1]);
-                    return InspectionResult.reject(null, "AI 응답의 실패코드 형식이 올바르지 않습니다: " + textResponse, geminiModelName);
+                    return InspectionResult.reject(400, null, "AI 응답의 실패코드 형식이 올바르지 않습니다: " + textResponse, geminiModelName);
                 }
             } else {
                 // "반려"로 시작하지만 형식이 맞지 않는 경우
                 log.warn("AI 응답이 '반려'로 시작하지만 형식이 올바르지 않습니다: {}", textResponse);
                 String reason = textResponse.length() > 3 ? textResponse.substring(3).trim() : "AI가 등록을 거부했습니다.";
-                return InspectionResult.reject(null, reason, geminiModelName);
+                return InspectionResult.reject(500, null, reason, geminiModelName);
             }
 
         } else {
-            return InspectionResult.reject(null, "AI가 판독 불가 응답을 반환했습니다: ", geminiModelName);
+            return InspectionResult.reject(600, null, "AI가 판독 불가 응답을 반환했습니다: ", geminiModelName);
         }
     }
 

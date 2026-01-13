@@ -1,8 +1,5 @@
 package com.tikitaka.api.batch.inspection.entity;
 
-import com.tikitaka.api.goods.entity.Goods;
-import com.tikitaka.api.inspection.dto.InspectionResult;
-import com.tikitaka.api.member.dto.CustomUserDetails;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.ToString;
@@ -10,6 +7,10 @@ import lombok.ToString;
 import java.sql.Date;
 import java.time.LocalDate;
 import java.time.ZonedDateTime;
+
+import com.tikitaka.api.batch.goods.dto.GoodsResultDto;
+import com.tikitaka.api.batch.inspection.dto.InspectionResult;
+import com.tikitaka.api.global.entity.CustomUserDetails;
 
 @Getter
 @ToString
@@ -26,7 +27,7 @@ public class InspectionHistory {
     /**
      * 상품, 검수결과, 사용자 정보를 바탕으로 History 엔티티를 생성하는 정적 메서드
      */
-    public static InspectionHistory of(Goods goods, InspectionResult result, CustomUserDetails user) {
+    public static InspectionHistory of(GoodsResultDto goods, InspectionResult result, CustomUserDetails user) {
         return InspectionHistory.builder()
                 .goodsId(goods.getGoodsId())
                 .inspectionDate(ZonedDateTime.now())

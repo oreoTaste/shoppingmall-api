@@ -1,10 +1,7 @@
 package com.tikitaka.api.batch.goods;
 
-import java.util.List;
-
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.ModelAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 //import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -12,7 +9,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.tikitaka.api.batch.inspection.dto.InspectionResultReq;
 import com.tikitaka.api.global.dto.ApiResponseDto;
-import com.tikitaka.api.goods.dto.GoodsListDto;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

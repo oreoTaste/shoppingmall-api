@@ -1,7 +1,7 @@
 package com.tikitaka.api.global.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.tikitaka.api.member.dto.CustomUserDetails;
+import com.tikitaka.api.global.entity.CustomUserDetails;
 
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;

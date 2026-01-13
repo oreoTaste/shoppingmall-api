@@ -1,4 +1,4 @@
-package com.tikitaka.api.member.dto;
+package com.tikitaka.api.global.entity;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -71,6 +71,5 @@ public class CustomUserDetails implements UserDetails {
 		return "CustomUserDetails = {memberId:" + memberId + ", loginId:" + loginId + ", name: " + name + ", password:" + password
 				+ ", adminYn:" + adminYn + ", authorities:" + authorities + "}";
 	}
-	
-
 }
+

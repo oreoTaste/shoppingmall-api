@@ -1,4 +1,4 @@
-package com.tikitaka.api.goods.entity;
+package com.tikitaka.api.batch.goods.dto;
 
 import com.tikitaka.api.global.entity.CommonEntity;
 
@@ -9,7 +9,7 @@ import lombok.Setter;
 @Getter
 @Setter
 @NoArgsConstructor // JSON 역직렬화를 위해 기본 생성자(public Goods() {})를 자동으로 추가합니다.
-public class Goods extends CommonEntity {
+public class GoodsResultDto extends CommonEntity {
 	// 상품의 고유 ID (테이블의 goods_id와 매핑)
 	private Long goodsId;
 	// 상품명
@@ -29,7 +29,7 @@ public class Goods extends CommonEntity {
 	private String dgroup; // 소분류
 	private String sgroup; // 세분류
 
-	public Goods(Long goodsId, String goodsName, String mobileGoodsName, Long salesPrice, Long buyPrice, String origin, Long insertId, Long updateId) {
+	public GoodsResultDto(Long goodsId, String goodsName, String mobileGoodsName, Long salesPrice, Long buyPrice, String origin, Long insertId, Long updateId) {
 		this.goodsId = goodsId;
 		this.goodsName = goodsName;
 		this.mobileGoodsName = mobileGoodsName;
@@ -40,7 +40,7 @@ public class Goods extends CommonEntity {
 		this.updateId = updateId; // CommonEntity 필드
 	}
 	
-	public Goods(String goodsName, String mobileGoodsName, Long salesPrice, Long buyPrice, String origin, Long insertId, Long updateId) {
+	public GoodsResultDto(String goodsName, String mobileGoodsName, Long salesPrice, Long buyPrice, String origin, Long insertId, Long updateId) {
 		this.goodsName = goodsName;
 		this.mobileGoodsName = mobileGoodsName;
 		this.salesPrice = salesPrice;
